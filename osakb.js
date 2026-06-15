@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { run } = require('./executor');
 const chacha20 = require('./chacha20');
 const mouse = require('./mouse');
-const qrcode = require('./vendor/qrcode-terminal/lib/main');
+const qrcode = require('./qr');
 
 const PORT = Number(process.env.PORT) || 8765;
 const HOST = process.env.HOST || '0.0.0.0';

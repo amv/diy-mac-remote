@@ -206,18 +206,11 @@ a trusted home LAN that's fine; for stronger guarantees, run it behind TLS/VPN.
 - `public/index.html` — the mobile web keyboard (self-contained; inlines SHA-256,
   ChaCha20, HMAC, and the UI).
 - `public/manifest.webmanifest`, `public/icon-*.png` — home-screen app metadata.
-- `vendor/qrcode-terminal/` — vendored QR-code generator (used to print the
-  scan-to-connect QR on startup). See [Third-party licenses](#third-party-licenses).
+- `qr.js` — self-contained QR-code generator used to print the scan-to-connect
+  QR on startup. Fixed to Version 5 / EC level L / byte mode (106 bytes max).
 
 ## License
 
 osakb is released under the [MIT License](LICENSE).
 
-### Third-party licenses
-
-This project vendors one third-party module:
-
-- **qrcode-terminal** v0.12.0 — Apache License 2.0. See
-  [`vendor/qrcode-terminal/LICENSE`](vendor/qrcode-terminal/LICENSE). The
-  original source is retained unmodified, with its copyright and license
-  notices intact.
+This project has no third-party runtime dependencies.
