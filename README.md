@@ -1,21 +1,44 @@
 # diy-mac-remote — your iPhone as a **keyboard** and **trackpad** for your Mac, built and delivered by you.
 
-There is **no App Store app** to install. There is **no compiled installer** for
-the backend. There never will be. Instead you get the source for both halves — a
-tiny Node server and a self-contained web app — and *you* decide how to deliver
-them onto your own machines (but we do offer easy to follow guides).
+When you open your machine up to be controlled remotely, you **really** want
+to know that the tools doing the controlling **can be trusted**.
 
-That is the whole point. `diy-mac-remote` is a kit, not a product. You own the
-secret, you own the server, you own the page your phone loads. Nothing is signed
-by us, hosted by us, or phoning home to us, because there is no "us" in the loop
-once you've cloned the repo.
+The simplest way to raise that trust is to shrink the list of parties you have
+to rely on, because even if those parties are honest, you are also trusting
+that **they themselves are not hacked!**
+
+That is the aim of this project: to keep the list of trusted parties list as
+short as possible by helping you do most of it **yourself**, in a way that is
+**transparent**, **verifiable**, and **easy**.
+
+There is **no App Store app** to install. There is **no compiled installer**
+for the part running on your mac. There never will be. Instead you get the
+source for both halves and *you* decide how to deliver them onto your own mac
+and phone by following our guides.
+
+`diy-mac-remote` is a kit, not a product. Nothing is signed by us, hosted by
+us, or phoning home to us, because there is no "us" in the loop once you've
+downloaded the repo. You are in charge of everything that runs both on your
+phone and mac.
+
+And as a small bonus, there is also no cost, and no ads.
 
 ```
-┌────────────┐        you wire this up yourself        ┌────────────┐
-│  your Mac  │  ◀── Node server (server.js) ────────   │ your iPhone│
-│ (the host) │      web app (public/index.html)  ──▶   │ (the app)  │
-└────────────┘                                          └────────────┘
+┌────────────┐        you wire this up yourself:       ┌────────────┐
+│  your Mac  │  ◀─ Mac software (server.js) --------   │ your iPhone│
+│ (the host) │  ----- Web app (public/index.html) ─▶   │ (the app)  │
+└────────────┘                                         └────────────┘
 ```
+
+As an extra measure, if you have access to an LLM agent, you should download
+this code, and then ask the agent to verify none of the code and examples in
+this repo contain clever ways to try to hack you.
+
+It is not only you being rightfully untrusting of me who wrote this message,
+but untrusting of all of the infrastructure that was needed to send these bits
+to your computer - because a lot could have gone wrong along the way, and you
+might be reading a guide that was purposefully altered to get you to do things
+that expose your computer to be controlled by hackers.
 
 ## The DIY deal
 
