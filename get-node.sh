@@ -25,19 +25,44 @@
 # it is the same "shrink and split your trust" idea the rest of diy-mac-remote
 # is built on.
 #
-# The value below was originally read from the official SHASUMS256.txt by taking
-# the line for node-v26.3.1-darwin-arm64.tar.xz — but once copied here and
-# committed, it is *our* pinned value, not theirs.
+# The values below were originally read from the official SHASUMS256.txt by
+# taking the lines for the two macOS builds — but once copied here and committed,
+# they are *our* pinned values, not theirs.
+#
+# We pin both Mac architectures: Apple Silicon (arm64) and older Intel (x64).
 
-EXPECTED_SHA256="49aca22a8c2992c16688baa512a7b00c41a4608e9675fcaa81534767bf1116ce"
+EXPECTED_SHA256_ARM64="49aca22a8c2992c16688baa512a7b00c41a4608e9675fcaa81534767bf1116ce"
+EXPECTED_SHA256_X64="dac58e340c721332d331a44c9ee2e126b26632c42d3028eb2ceb5c3f218798fa"
 
 set -eu   # -e: stop on the first error.  -u: error on unset variables.
 
+# --- Pick the right build for this Mac --------------------------------------
+
+# `uname -m` prints the machine's CPU architecture. On macOS it is "arm64" on
+# Apple Silicon (M1/M2/...) and "x86_64" on older Intel Macs. We use that to
+# choose the matching Node.js tarball and its pinned checksum.
+ARCH="$(uname -m)"
+case "$ARCH" in
+  arm64)
+    NODE_ARCH="darwin-arm64"
+    EXPECTED_SHA256="$EXPECTED_SHA256_ARM64"
+    ;;
+  x86_64)
+    NODE_ARCH="darwin-x64"
+    EXPECTED_SHA256="$EXPECTED_SHA256_X64"
+    ;;
+  *)
+    echo "Unsupported architecture '$ARCH' — this script only handles Apple" >&2
+    echo "Silicon (arm64) and Intel (x86_64) Macs." >&2
+    exit 1
+    ;;
+esac
+
 # --- What we are fetching ---------------------------------------------------
 
-# The exact Node.js build. This is the macOS Apple-Silicon (arm64) tarball.
+# The exact Node.js build, chosen above to match this Mac's architecture.
 NODE_VERSION="v26.3.1"
-NODE_FILE="node-${NODE_VERSION}-darwin-arm64.tar.xz"
+NODE_FILE="node-${NODE_VERSION}-${NODE_ARCH}.tar.xz"
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_FILE}"
 
 # Where the unpacked Node will end up, relative to this script.

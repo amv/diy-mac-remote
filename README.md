@@ -74,6 +74,17 @@ the recipes.
 The simplest delivery method: run the server from source and load the app over
 your LAN. No build step, no signing, no store.
 
+The fastest path is [`start.sh`](start.sh), which gets a verified Node.js (only
+if you don't already have one unpacked) and starts the server for you:
+
+```sh
+./start.sh                # fetches ./node if needed, then runs the server
+./start.sh tailscale      # any arguments are forwarded to server.js
+```
+
+Then scan the QR code, grant Accessibility rights, and you're controlling your
+Mac. The rest of this section explains each step if you'd rather run them by hand:
+
 1. Open your Terminal.
 2. Clone this repo with git on your machine.
 3. Get Node.js — use your own, or run [`get-node.sh`](get-node.sh) (see below).
@@ -102,8 +113,9 @@ pinning the hash in this repo, fooling you requires compromising **both**
 nodejs.org **and** this repository — the same "split your trust" idea the rest of
 `diy-mac-remote` is built on.
 
-> The script fetches the macOS Apple-Silicon (arm64) build. Once it's unpacked,
-> use `./node/bin/node server.js` in place of `node server.js` below.
+> The script detects your Mac's CPU with `uname -m` and fetches the matching
+> build — Apple Silicon (arm64) or Intel (x64). Once it's unpacked, use
+> `./node/bin/node server.js` in place of `node server.js` below.
 
 ### Run the server
 
@@ -288,6 +300,8 @@ make.
 
 ## Files
 
+- `start.sh` — one-command launcher: runs `get-node.sh` if `./node` is missing,
+  then starts the server with that Node (forwarding any arguments to `server.js`).
 - `get-node.sh` — fetches an official Node.js build and verifies it against a
   SHA-256 checksum pinned in this repo before unpacking it into `./node`.
 - `server.js` — HTTP server, routing, auth/crypto, static files.
