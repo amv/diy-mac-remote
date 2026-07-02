@@ -44,7 +44,7 @@ that expose your computer to be controlled by hackers.
 
 Two halves, and **you** are responsible for getting each one where it needs to go:
 
-- **The backend** is `server.js` — plain JavaScript. You run the source with Node. No other dependencies!
+- **The backend** is `server.js` — plain JavaScript. We help you get a safe version of Node.js to run it on, and there are no other dependencies.
 - **The app** is `public/index.html` — a single self-contained web page. You load it onto your phone yourself.
 
 For each half there are several ways to do the delivery, with different
@@ -260,7 +260,12 @@ attacker in your network when your phone loads the UI from the server, the
 attacker can start operating your keyboard and mouse. You do not want that.
 
 1. **Shared secret.** Stored in `~/.diy-mac-remote/secret` (auto-created, 32 hex
-   chars, owner-only perms), kept in memory while running. The phone gets it
+   chars, owner-only perms), kept in memory while running. Ownership and mode are
+   **re-checked on every load** (ssh-style): the server refuses to use the secret
+   if the file or its directory is owned by another user or is readable by group/
+   other, rather than trusting whatever is on disk — so a stray process can't slip
+   in a secret it knows, and a loosened-perms secret is rejected instead of used.
+   The phone gets it
    **out-of-band via the QR code** the server prints on startup, which encodes
    `http://host.local:PORT/#<secret>`. The `#fragment` is **never sent to the
    server**, so the secret stays off the wire; the page reads it from

@@ -48,18 +48,66 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const SECRET_DIR = path.join(os.homedir(), '.diy-mac-remote');
 const SECRET_FILE = path.join(SECRET_DIR, 'secret');
 
+// Refuse to use the secret (or its directory) unless we own it and no other user
+// can touch it — the same stance ssh takes on private keys. Beyond keeping the
+// secret from leaking to other local users, this guards a niche injection: a
+// rogue process that can *create* a file but can't overwrite ours or change its
+// permissions still can't hand us a secret it knows, because a file/dir it
+// created is owned by a different uid (or left group/other-accessible), and we
+// reject that. `stat` should come from the open fd (fstat) so we validate exactly
+// what we read, leaving no check-then-swap (TOCTOU) window.
+function assertOwnerOnly(label, stat) {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid !== null && stat.uid !== uid) {
+    throw new Error(
+      `${label} is owned by uid ${stat.uid}, not you (uid ${uid}). Refusing to use ` +
+      `it — inspect and remove ${SECRET_DIR}, then restart to regenerate.`
+    );
+  }
+  if (stat.mode & 0o077) {
+    throw new Error(
+      `${label} is accessible to other users (mode ${(stat.mode & 0o777).toString(8)}). ` +
+      `The secret may be exposed — remove ${SECRET_DIR} and restart to regenerate.`
+    );
+  }
+}
+
 // Load the shared secret from ~/.diy-mac-remote/secret, creating it (with a random
-// 32-hex-char value) on first run. Kept in memory for the process lifetime.
-// Files are created with owner-only permissions.
+// 32-hex-char value) on first run. Kept in memory for the process lifetime. The
+// file and its directory are created with owner-only permissions, and those are
+// re-checked (ownership + mode) on every load — we refuse a secret we don't fully
+// control rather than trust whatever is on disk.
 function loadOrCreateSecret() {
+  let fd = null;
   try {
-    const existing = fs.readFileSync(SECRET_FILE, 'utf8').trim();
-    if (existing) return { secret: existing, created: false };
+    fd = fs.openSync(SECRET_FILE, 'r');
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
   }
+
+  if (fd !== null) {
+    try {
+      // Validate the containing dir too: a foreign-owned or group/other-writable
+      // dir would let another user swap the file underneath us.
+      assertOwnerOnly(SECRET_DIR, fs.statSync(SECRET_DIR));
+      assertOwnerOnly(SECRET_FILE, fs.fstatSync(fd));
+      const existing = fs.readFileSync(fd, 'utf8').trim();
+      if (existing) return { secret: existing, created: false };
+      // Empty file that we own — fall through and regenerate over it.
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  // Create path: make sure the dir exists and is ours + owner-only before we
+  // write the new secret into it.
+  try {
+    assertOwnerOnly(SECRET_DIR, fs.statSync(SECRET_DIR));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
+  }
   const secret = crypto.randomBytes(16).toString('hex'); // 32 hex chars
-  fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(SECRET_FILE, secret + '\n', { mode: 0o600 });
   return { secret, created: true };
 }
