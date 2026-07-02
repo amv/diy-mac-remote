@@ -419,27 +419,53 @@
     }
   }
 
-  // ---- auth: shared secret + HMAC-SHA256 + nonce/counter ----
+  // ---- auth: master pairing key -> secret (crypto) + token (hash-checked) ----
   var SECRET_KEY = 'diy-mac-remote_secret';
+  var TOKEN_KEY = 'diy-mac-remote_token';
 
-  // Acquire the secret: from the URL fragment (#… set by the QR/link, never sent
-  // to the server), else from localStorage, else prompt the user to paste it.
-  function loadSecret() {
+  // The QR/link fragment carries a single high-entropy MASTER. We derive both
+  // credentials from it with two domain-separated one-way hashes: the SECRET keys
+  // the ChaCha20/HMAC crypto (the server keeps it in the clear), and the TOKEN is
+  // an extra proof the server keeps ONLY as a hash — so read access to the Mac's
+  // disk yields the secret but not the token, and can't drive the machine. The
+  // master is never sent to the server and we don't keep it; we store only the two
+  // derived values. (Same derivation prefixes as the server — keep them in sync.)
+  function deriveCreds(master) {
+    return {
+      secret: SHA256.toHex(SHA256.bytes(SHA256.toBytes('diy-mac-remote-secret:' + master))),
+      token: SHA256.toHex(SHA256.bytes(SHA256.toBytes('diy-mac-remote-authtoken:' + master)))
+    };
+  }
+
+  // Acquire creds: derive from the fragment master (never sent to the server) and
+  // cache the two derived values, else fall back to the cached values, else
+  // (later) prompt the user to paste the master/URL.
+  function storeCreds(c) {
+    try { localStorage.setItem(SECRET_KEY, c.secret); } catch (e) {}
+    try { localStorage.setItem(TOKEN_KEY, c.token); } catch (e) {}
+  }
+  function loadCreds() {
     if (location.hash && location.hash.length > 1) {
-      var s = decodeURIComponent(location.hash.slice(1));
-      if (s) {
-        try { localStorage.setItem(SECRET_KEY, s); } catch (e) {}
+      var master = decodeURIComponent(location.hash.slice(1));
+      if (master) {
+        var c = deriveCreds(master);
         // NOTE: we intentionally leave the #fragment in the URL. iOS "Add to
         // Home Screen" saves the current URL as the app's launch URL, so keeping
-        // the secret in the fragment lets the installed (separately-sandboxed)
-        // app auto-authenticate instead of prompting. (It stays out of network
-        // requests, but does remain in Safari's address bar / history.)
-        return s;
+        // the master in the fragment lets the installed (separately-sandboxed) app
+        // re-derive and auto-authenticate instead of prompting. (The master stays
+        // out of network requests, but does remain in Safari's address bar / history.)
+        storeCreds(c);
+        return c;
       }
     }
-    try { return localStorage.getItem(SECRET_KEY) || null; } catch (e) { return null; }
+    var s = null, t = null;
+    try { s = localStorage.getItem(SECRET_KEY) || null; } catch (e) {}
+    try { t = localStorage.getItem(TOKEN_KEY) || null; } catch (e) {}
+    return { secret: s, token: t };
   }
-  var secret = loadSecret();
+  var creds = loadCreds();
+  var secret = creds.secret;
+  var token = creds.token;
 
   // Derive separate encryption + MAC subkeys from the secret (never share a key
   // between cipher and MAC). Recomputed whenever the secret changes.
@@ -514,7 +540,7 @@
   function sendEncrypted(ops, isRetry) {
     return ensureNonce().then(function () {
       counter += 1;
-      var plain = JSON.stringify({ n: nonce, c: counter, o: ops });
+      var plain = JSON.stringify({ n: nonce, c: counter, o: ops, p: token });
       var iv = randomBytes(12);
       var ct = ChaCha20.xor(encKey, iv, 1, padPlaintext(plain));
       var ivB = b64(iv), ctB = b64(ct);
@@ -578,8 +604,8 @@
   }
 
   function haveSecret() {
-    if (secret) return true;
-    setStatus('no secret', 'err');
+    if (secret && token) return true;
+    setStatus(secret ? 'not paired — token missing' : 'no secret', 'err');
     showSecretPrompt();
     return false;
   }
@@ -592,12 +618,12 @@
   }
   // Coalesced relative mouse movement / scrolling.
   function moveMouse(dx, dy) {
-    if (!secret) return;
+    if (!secret || !token) return;
     pendMove.dx += dx; pendMove.dy += dy;
     scheduleFlush();
   }
   function scrollMouse(dy) {
-    if (!secret) return;
+    if (!secret || !token) return;
     pendScroll.dy += dy;
     scheduleFlush();
   }
@@ -617,10 +643,11 @@
     ov.className = 'overlay';
     ov.innerHTML =
       '<div class="box">' +
-      '<h2>Enter your secret</h2>' +
-      '<p>Scan the QR the server printed, or paste the secret (or the full URL) below.</p>' +
+      '<h2>Pair this device</h2>' +
+      '<p>Scan the QR the server printed, or paste the full URL (or the pairing ' +
+      'key after the <code>#</code>) below.</p>' +
       '<input id="secret-input" type="text" autocomplete="off" autocapitalize="off" ' +
-      'autocorrect="off" spellcheck="false" placeholder="secret or http://…/#secret" />' +
+      'autocorrect="off" spellcheck="false" placeholder="pairing key or http://…/#key" />' +
       '<button id="secret-save" type="button">Save</button>' +
       '</div>';
     document.body.appendChild(ov);
@@ -630,11 +657,12 @@
       if (v.indexOf('#') >= 0) v = v.slice(v.lastIndexOf('#') + 1);
       v = v.trim();
       if (!v) return;
-      try { localStorage.setItem(SECRET_KEY, v); } catch (e) {}
-      secret = v; nonce = null; deriveKeys();
+      var c = deriveCreds(v);
+      storeCreds(c);
+      secret = c.secret; token = c.token; nonce = null; deriveKeys();
       document.body.removeChild(ov);
       secretPromptShown = false;
-      setStatus('secret saved', 'ok');
+      setStatus('paired', 'ok');
       fetchNonce().catch(function () {});
     }
     ov.querySelector('#secret-save').addEventListener('click', save);
@@ -935,11 +963,11 @@
   onTap(tabs.kb.btn, function () { selectTab('kb'); });
 
   buildKbSpecial(); // build the special-keys bar now (Mouse is the default tab)
-  if (secret) {
+  if (secret && token) {
     setStatus('ready');
     fetchNonce().catch(function () {}); // warm up a nonce
   } else {
-    setStatus('no secret', 'err');
+    setStatus(secret ? 'not paired — token missing' : 'no secret', 'err');
     showSecretPrompt();
   }
 })();

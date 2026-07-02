@@ -43,10 +43,15 @@ function parseInvocation() {
   return { url: url || null, mode: mode || 'detect' };
 }
 const { url: OVERRIDE_URL, mode: MODE } = parseInvocation();
+// `--reset-token` mints a fresh pairing key and prints a new QR (every previously
+// paired device must then re-pair). Use it to pair a new device, or to recover
+// when a phone loses its bookmarked pairing.
+const RESET_TOKEN = process.argv.slice(2).includes('--reset-token');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SECRET_DIR = path.join(os.homedir(), '.diy-mac-remote');
 const SECRET_FILE = path.join(SECRET_DIR, 'secret');
+const TOKEN_FILE = path.join(SECRET_DIR, 'token.hash');
 
 // Refuse to use the secret (or its directory) unless we own it and no other user
 // can touch it — the same stance ssh takes on private keys. Beyond keeping the
@@ -72,53 +77,103 @@ function assertOwnerOnly(label, stat) {
   }
 }
 
-// Load the shared secret from ~/.diy-mac-remote/secret, creating it (with a random
-// 32-hex-char value) on first run. Kept in memory for the process lifetime. The
-// file and its directory are created with owner-only permissions, and those are
-// re-checked (ownership + mode) on every load — we refuse a secret we don't fully
-// control rather than trust whatever is on disk.
-function loadOrCreateSecret() {
+function sha256(data) { return crypto.createHash('sha256').update(data).digest(); }
+function sha256hex(str) { return sha256(str).toString('hex'); }
+
+// ---- pairing: one "master" key in the QR, two credentials derived from it ----
+//
+// The QR/link fragment carries a single high-entropy MASTER. From it we derive,
+// with two domain-separated one-way hashes:
+//   - the SECRET, which keys the ChaCha20/HMAC crypto, and
+//   - the TOKEN, a second-layer proof.
+// We keep them apart on disk: the SECRET must live there in the clear (the server
+// needs it to run the crypto), but of the TOKEN we store ONLY its hash. The MASTER
+// itself is NEVER written to disk — persisting it would let a disk reader
+// reconstruct the token and defeat the whole layer. So a disk reader (or someone
+// with a stolen backup) gets SECRET + hash(TOKEN) but not the TOKEN, and without
+// the token the server rejects every command. Deriving both from one master keeps
+// the fragment short enough for the fixed-size QR; it does NOT weaken the split,
+// because SECRET = H1(master) reveals nothing about TOKEN = H2(master) (different
+// prefixes → independent oracles), and master stays high-entropy (128 bits) so it
+// can't be brute-forced against the on-disk secret. (Boundary is unchanged: this
+// does NOT stop an attacker who also captures live traffic, or reads memory. See
+// README › Security.)
+function deriveSecret(master) { return sha256hex('diy-mac-remote-secret:' + master); }
+function deriveToken(master) { return sha256hex('diy-mac-remote-authtoken:' + master); }
+function hashToken(token) { return sha256('diy-mac-remote-token:' + token); }
+
+// Read an owner-only file's trimmed contents, or null if it's missing/empty.
+// Ownership + mode are enforced on the open fd (and the dir) exactly like ssh —
+// we refuse a credential we don't fully control rather than trust what's on disk.
+function readOwnedFile(file) {
   let fd = null;
   try {
-    fd = fs.openSync(SECRET_FILE, 'r');
+    fd = fs.openSync(file, 'r');
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
+    return null;
   }
-
-  if (fd !== null) {
-    try {
-      // Validate the containing dir too: a foreign-owned or group/other-writable
-      // dir would let another user swap the file underneath us.
-      assertOwnerOnly(SECRET_DIR, fs.statSync(SECRET_DIR));
-      assertOwnerOnly(SECRET_FILE, fs.fstatSync(fd));
-      const existing = fs.readFileSync(fd, 'utf8').trim();
-      if (existing) return { secret: existing, created: false };
-      // Empty file that we own — fall through and regenerate over it.
-    } finally {
-      fs.closeSync(fd);
-    }
+  try {
+    // Validate the containing dir too: a foreign-owned or group/other-writable
+    // dir would let another user swap the file underneath us.
+    assertOwnerOnly(SECRET_DIR, fs.statSync(SECRET_DIR));
+    assertOwnerOnly(file, fs.fstatSync(fd));
+    return fs.readFileSync(fd, 'utf8').trim() || null;
+  } finally {
+    fs.closeSync(fd);
   }
+}
 
-  // Create path: make sure the dir exists and is ours + owner-only before we
-  // write the new secret into it.
+function loadStored() {
+  const secret = readOwnedFile(SECRET_FILE);
+  const hex = readOwnedFile(TOKEN_FILE);
+  return { secret, tokenHash: hex ? Buffer.from(hex, 'hex') : null };
+}
+
+// Mint a fresh pairing: generate a master, derive + store the secret and the
+// token HASH (owner-only), and DISCARD the master — returning it only so we can
+// print the pairing QR this one time. The master never touches disk.
+function mint() {
   try {
     assertOwnerOnly(SECRET_DIR, fs.statSync(SECRET_DIR));
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
     fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
   }
-  const secret = crypto.randomBytes(16).toString('hex'); // 32 hex chars
+  const master = crypto.randomBytes(16).toString('base64url'); // 128-bit, URL-safe, 22 chars
+  const secret = deriveSecret(master);
+  const tokenHash = hashToken(deriveToken(master));
   fs.writeFileSync(SECRET_FILE, secret + '\n', { mode: 0o600 });
-  return { secret, created: true };
+  fs.writeFileSync(TOKEN_FILE, tokenHash.toString('hex') + '\n', { mode: 0o600 });
+  return { master, secret, tokenHash };
 }
 
-const { secret: SECRET, created: SECRET_CREATED } = loadOrCreateSecret();
+// Resolve credentials: reuse what's stored (normal restart — no master, so no QR
+// to reprint), else mint fresh (first run, `--reset-token`, or a half-written
+// state). MASTER is non-null only when we just minted, i.e. when we can pair.
+let SECRET, TOKEN_HASH, MASTER = null;
+{
+  const stored = RESET_TOKEN ? { secret: null, tokenHash: null } : loadStored();
+  if (stored.secret && stored.tokenHash) {
+    SECRET = stored.secret;
+    TOKEN_HASH = stored.tokenHash;
+  } else {
+    ({ master: MASTER, secret: SECRET, tokenHash: TOKEN_HASH } = mint());
+  }
+}
+const MINTED = MASTER !== null;
 
 // Derive separate subkeys for encryption and authentication (never share a key
 // between the cipher and the MAC). Both are 32 bytes.
-function sha256(data) { return crypto.createHash('sha256').update(data).digest(); }
 const ENC_KEY = sha256('diy-mac-remote-enc:' + SECRET);
 const MAC_KEY = sha256('diy-mac-remote-mac:' + SECRET);
+
+// Constant-time check of a client-supplied token against the stored hash.
+function tokenOk(p) {
+  if (typeof p !== 'string' || !p) return false;
+  const got = hashToken(p);
+  return got.length === TOKEN_HASH.length && crypto.timingSafeEqual(got, TOKEN_HASH);
+}
 
 // ---- challenge-response auth (nonce + monotonic counter + HMAC-SHA256) ----
 //
@@ -355,6 +410,10 @@ const server = http.createServer(async (req, res) => {
     const check = checkNonceCounter(msg.n, msg.c);
     if (!check.ok) return sendJSON(res, 401, { error: check.error });
 
+    // Second-layer auth: the decrypted payload must carry the token (msg.p) whose
+    // hash matches the one on disk. Read access to the disk alone can't produce it.
+    if (!tokenOk(msg.p)) return sendJSON(res, 401, { error: 'bad or missing token' });
+
     return dispatchOps(res, msg.o);
   }
 
@@ -463,10 +522,21 @@ function resolveBase() {
   return { url: null, kind: 'none' };
 }
 
-// Append the secret as the URL fragment (replacing any existing one).
-function withSecret(base, secret) {
+// Append a fragment (replacing any existing one). The pairing fragment carries
+// the master pairing key; it is never sent to the server.
+function withFragment(base, frag) {
   const hash = base.indexOf('#');
-  return (hash >= 0 ? base.slice(0, hash) : base) + '#' + secret;
+  return (hash >= 0 ? base.slice(0, hash) : base) + '#' + frag;
+}
+
+// Render a QR, or fall back to just the link if the payload overflows the fixed
+// v5 QR capacity (can happen with a long Tailscale/custom host + both creds).
+function printQR(url) {
+  try {
+    qrcode.generate(url, { small: true });
+  } catch (err) {
+    console.log('   (link is too long to draw as a QR here — open the URL below directly)');
+  }
 }
 
 server.listen(PORT, HOST, () => {
@@ -475,9 +545,10 @@ server.listen(PORT, HOST, () => {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
   }
   console.log(
-    SECRET_CREATED
-      ? `\nGenerated a new secret at ${SECRET_FILE}`
-      : `\nLoaded secret from ${SECRET_FILE}`
+    MINTED
+      ? `\nMinted a new pairing in ${SECRET_DIR}` +
+        `\n  (the derived secret is stored; of the token, only its hash — pair via the QR below)`
+      : `\nLoaded secret + auth-token hash from ${SECRET_DIR}`
   );
 
   const { url: base, kind, ips } = resolveBase();
@@ -527,11 +598,20 @@ server.listen(PORT, HOST, () => {
     console.log('   A LAN address is only safe on a network whose router you trust.');
   }
 
-  // QR with the secret in the #fragment — never sent to the server, but the
-  // page reads it from location.hash, so scanning both opens the app and hands
-  // it the secret.
-  const authUrl = withSecret(base, SECRET);
-  console.log('\nScan to open + authenticate (secret is in the # fragment):');
-  qrcode.generate(authUrl, { small: true });
-  console.log(authUrl + '\n');
+  // Pairing hands the phone the MASTER in the #fragment (never sent to the
+  // server); the page derives the secret + token from it. We can only show the
+  // master right after minting it (first run or --reset-token) — on a normal
+  // restart it's gone by design (disk holds only the derived secret + token hash),
+  // so paired devices just reopen the app and new ones re-pair.
+  if (MASTER) {
+    const authUrl = withFragment(base, MASTER);
+    console.log('\nScan to pair this device (the pairing key is in the # fragment):');
+    printQR(authUrl);
+    console.log(authUrl + '\n');
+  } else {
+    console.log('\nAlready-paired devices: just open the app (they kept their credentials).');
+    console.log('To pair a NEW device (or recover a lost pairing), restart with:');
+    console.log('  node server.js --reset-token');
+    console.log('  ⚠️  This mints a fresh pairing key — every paired device must re-pair.\n');
+  }
 });

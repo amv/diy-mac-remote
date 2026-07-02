@@ -120,16 +120,24 @@ nodejs.org **and** this repository — the same "split your trust" idea the rest
 ### Run the server
 
 ```sh
-node server.js           # detect (default): try tailscale first, then wifi
-node server.js wifi      # try only the Mac .local mDNS address
-node server.js tailscale # try only the Tailscale MagicDNS name
+node server.js               # detect (default): try tailscale first, then wifi
+node server.js wifi          # try only the Mac .local mDNS address
+node server.js tailscale     # try only the Tailscale MagicDNS name
 PORT=8700 node server.js http://192.168.0.2:8700 # custom URL verbatim
+node server.js --reset-token # rotate the auth token + print a fresh pairing QR
 ```
 
 It prints the address to open on your phone plus a QR code to make it easier.
 
-The QR (and printed link) then point at that URL with the secret appended as the
-`#fragment`.
+The QR (and printed link) point at that URL with a single **pairing key** appended
+as the `#fragment` (`#<key>`). The phone derives *two* credentials from it — the
+secret that keys the crypto and a token the server only ever stores hashed (see
+[Security](#security)). The key is minted on first run. On a normal restart the
+server can no longer show it (it kept only the derived secret and the token's hash
+— that's the point), so already-paired devices just reopen the app; to pair a
+**new** device, or to recover if a phone loses its pairing, run
+`node server.js --reset-token` to mint a fresh key and QR. That rotates the
+pairing, so every previously paired device must re-pair.
 
 ### Deliver the app to your Home Screen (full-screen)
 
@@ -230,7 +238,7 @@ iv  = base64(random 12-byte ChaCha20 nonce)
 ct  = base64(ChaCha20(encKey, iv, counter=1, pad(plaintext)))
 mac = hex(HMAC_SHA256(macKey, "POST\n/msg\n" + iv + "\n" + ct))   // encrypt-then-MAC
 
-plaintext = JSON: { "n": <authNonce>, "c": <counter>, "o": [ <op>, ... ] }
+plaintext = JSON: { "n": <authNonce>, "c": <counter>, "o": [ <op>, ... ], "p": <token> }
 op        = { "t":"k", "b": <action obj/array> }   // a keypress
           | { "t":"m", "k":"mv", "dx":<n>, "dy":<n> }   // mouse move (relative)
           | { "t":"m", "k":"cl", "btn":"l"|"r" }        // mouse click (down+up)
@@ -265,13 +273,14 @@ attacker can start operating your keyboard and mouse. You do not want that.
    if the file or its directory is owned by another user or is readable by group/
    other, rather than trusting whatever is on disk — so a stray process can't slip
    in a secret it knows, and a loosened-perms secret is rejected instead of used.
-   The phone gets it
+   The secret is **derived** from the pairing key the phone gets
    **out-of-band via the QR code** the server prints on startup, which encodes
-   `http://host.local:PORT/#<secret>`. The `#fragment` is **never sent to the
-   server**, so the secret stays off the wire; the page reads it from
-   `location.hash` and stores it in `localStorage`. (You can also paste it — the
-   app prompts if it has none.) Two subkeys are derived from it (one for the
-   cipher, one for the MAC).
+   `http://host.local:PORT/#<key>` — a single high-entropy value. The `#fragment`
+   is **never sent to the server**, so the pairing key stays off the wire; the page
+   reads it from `location.hash`, derives the secret (and the token, item 5), and
+   stores those in `localStorage`. (You can also paste the key — the app prompts if
+   it has none.) Two subkeys are then derived from the secret (one for the cipher,
+   one for the MAC).
 2. **Confidentiality.** Every action is encrypted with **ChaCha20** before
    sending. A fresh random nonce per message means identical keystrokes never
    produce identical ciphertext, so an eavesdropper can't correlate or count
@@ -290,6 +299,36 @@ attacker can start operating your keyboard and mouse. You do not want that.
    and rejects anything not strictly greater. Nonces are random 256-bit values,
    in-memory only (a restart invalidates old sessions), expire after 1 hour, and
    are capped to bound memory.
+5. **Second-layer auth token (disk-read hardening).** The shared secret has to
+   sit on disk in the clear — the server needs it to run the crypto — so anyone
+   who can **read** the disk (or restores a backup of your home dir) gets the
+   secret and could forge the crypto layer. A second-layer **token** guards against
+   exactly that. First run mints one random **pairing key** (the `#<key>` in the
+   QR) and derives from it, with two domain-separated one-way hashes, both the
+   `secret` and the `token`. On disk it stores the `secret` and **only the SHA-256
+   hash** of the token (`~/.diy-mac-remote/token.hash`, owner-only, perms enforced
+   on load); the **pairing key itself is never written to disk** — persisting it
+   would let a reader re-derive the token and defeat the layer. The phone keeps the
+   pairing key, re-derives the token, and includes it (`"p"`) inside every encrypted
+   message; the server hashes what it receives and compares — in constant time —
+   against the stored hash. So a disk reader gets `secret` + `hash(token)`, **not**
+   the token (and can't get it from the secret: `secret = H₁(key)` reveals nothing
+   about `token = H₂(key)`, and the 128-bit key can't be brute-forced), so the
+   server rejects every command. Deriving both from one key is purely so the QR
+   stays small; it doesn't weaken the split. Because the server keeps only the
+   secret + token hash, it can't reprint the pairing key on a later start: paired
+   devices just reopen the app, and to pair a new device (or recover a lost pairing)
+   you run `node server.js --reset-token`, which mints a fresh key + QR (all devices
+   re-pair; note the secret rotates with it).
+   - **What this covers:** offline theft of the disk or a backup — someone who
+     ends up with your files but was never on your network still can't drive the
+     Mac.
+   - **What it does *not* cover:** an attacker who **also captured your live
+     traffic** (the secret decrypts the token straight off the wire), or who can
+     **read process memory** (both live there while running), or who can **write**
+     the hash file (they'd just overwrite it — but such an attacker could overwrite
+     the secret too). This is a hardening of the read-only-disk case, not a new
+     trust boundary against an on-network attacker. For that, still use TLS/VPN.
 
 **Crypto in the browser:** `crypto.subtle` (Web Crypto) is only available in a
 secure context (HTTPS/localhost), which plain-HTTP LAN pages are not. So the page
@@ -321,6 +360,30 @@ make.
 - `public/manifest.webmanifest`, `public/icon-*.png` — Home-Screen app metadata.
 - `qr.js` — self-contained QR-code generator used to print the scan-to-connect
   QR on startup. Fixed to Version 5 / EC level L / byte mode (106 bytes max).
+- `test/` — the test suite (see below). Zero dependencies, no framework.
+
+## Tests
+
+Run them with plain Node — there's nothing to install:
+
+```sh
+npm test          # or: node test/run.js
+```
+
+Like the rest of the project, the suite has **no dependencies and no framework** —
+just a ~20-line runner (`test/harness.js`) over `node:assert`, so it's as
+auditable as the code it checks. It covers the security-critical parts:
+
+- **`chacha20.test.js`** — checks the pure-JS cipher against Node's *native*
+  ChaCha20 (authoritative, can't be miscopied), the RFC 8439 keystream vector, and
+  the encrypt/decrypt round-trip.
+- **`parity.test.js`** — runs the page's *inlined* SHA-256, ChaCha20, and
+  credential derivation in a sandbox and asserts they agree byte-for-byte with the
+  server, so the two copies can't silently drift apart.
+- **`pairing.test.js`** — drives the real server over HTTP the way the phone does:
+  master-derivation, the token second layer (valid → 200, wrong/missing → 401),
+  the **"the master is never written to disk"** invariant, owner-only file perms,
+  restart behaviour, and `--reset-token` rotation.
 
 ## License
 
