@@ -167,9 +167,101 @@ Notes:
   running in the Terminal.
 
 > **More delivery options coming.** This local path is one recipe. The roadmap is
-> a menu of others — self-hosting behind your own TLS, Tailscale-only access,
-> port-forwarding, and so on — each with its own guide, so you can choose the
-> delivery that matches the trust you have in your network.
+> a menu of others — Tailscale-only access, port-forwarding, and so on — each with
+> its own guide, so you can choose the delivery that matches the trust you have in
+> your network.
+
+## Serve it over HTTPS with a self-signed certificate
+
+By default `diy-mac-remote` runs over plain HTTP, and that is deliberately safe
+against a *passive* eavesdropper: every keystroke is already encrypted and
+authenticated (ChaCha20 + HMAC) before it leaves the phone. What plain HTTP does
+**not** protect against is an *active* man-in-the-middle on a router you don't
+control — someone positioned to rewrite the web page itself before your phone
+ever loads it (see [Security](#security)). Serving the page over HTTPS with a
+certificate your phone trusts closes that last gap: the phone refuses any page
+that isn't signed by *your* certificate.
+
+As a bonus, an HTTPS page is a browser **"secure context"**, so the native
+`crypto.subtle` becomes available and the page uses it for faster hashing
+instead of the bundled pure-JS fallback.
+
+This uses only tools already on macOS (`openssl`). No download, nothing to trust
+but yourself. You set up a tiny private Certificate Authority (CA) that lives
+only on your Mac, install it on your iPhone **once**, and from then on your phone
+trusts the server.
+
+### 1. Generate the certificate (on the Mac)
+
+```sh
+./gen-cert.sh                       # auto-detect this Mac's .local name, LAN IPs, Tailscale name
+./gen-cert.sh mymac.local 10.0.0.9  # ...plus any extra name/IP the phone will use
+```
+
+A certificate is only valid for the names and IPs baked into it, so if you'll
+reach the Mac by an address the script didn't auto-detect, pass it as an
+argument. This writes four files into `~/.diy-mac-remote/` (owner-only, the same
+place the pairing secret lives):
+
+- `ca-cert.pem` — your CA. **This is the file you put on the iPhone.** It's public; it's safe to copy around.
+- `ca-key.pem` — the CA's private key. Stays on the Mac, owner-only. Whoever holds this can mint certs your phone will trust, so don't copy it off the machine.
+- `cert.pem` / `key.pem` — the server's certificate and private key, served automatically.
+
+### 2. Start the server
+
+Nothing new to type — the server serves HTTPS automatically as soon as those
+files exist, and the printed QR/link switches to `https://`:
+
+```sh
+./start.sh
+```
+
+To temporarily go back to plain HTTP, start with `--no-tls`. To *require* HTTPS
+(fail loudly if the cert is missing rather than silently falling back), use
+`--tls`.
+
+### 3. Install and trust the CA on the iPhone (once)
+
+You need to get `~/.diy-mac-remote/ca-cert.pem` onto the phone and then flip
+**two** switches — installing a certificate and *trusting* it are separate steps
+on iOS.
+
+1. **Get the file onto the phone.** `gen-cert.sh` already dropped a copy in a
+   `diy-mac-remote` folder on your Desktop (alongside a
+   `HOWTO-AIRDROP-CERT-TO-PHONE.html` with these same steps) and opened it in
+   Finder — right-click `diy-mac-remote-ca.pem` → **Share → AirDrop** → your
+   iPhone. (If AirDrop doesn't offer to install it,
+   email the file to yourself and open it in the Mail app instead. Some iOS
+   versions are fussy about the extension — if so, rename the copy to
+   `diy-mac-remote-ca.crt` and send that.)
+2. iOS says **"Profile Downloaded"**. Open **Settings** → it shows **Profile
+   Downloaded** near the top (or go to **Settings → General → VPN & Device
+   Management**).
+3. Tap the **diy-mac-remote local CA** profile → **Install** (enter your
+   passcode) → **Install** again to confirm.
+4. **Now trust it** — this is the step people miss. Go to **Settings → General →
+   About → Certificate Trust Settings**. Under **Enable Full Trust for Root
+   Certificates**, turn **ON** the switch for **diy-mac-remote local CA**.
+
+That's it. Open `https://<your-mac>.local:8765/` (or scan the new QR) in
+**Safari** — no warning, a padlock, and you can Add to Home Screen as before.
+
+### Notes and caveats
+
+- **Changing address?** If the Mac's LAN IP changes, just re-run `./gen-cert.sh`
+  (add the new IP if needed) and restart the server. The phone keeps working with
+  **no reinstall** — the new certificate still chains up to the same CA it already
+  trusts. Reaching the Mac by its stable `.local` name avoids this entirely.
+- **Untrusting it later:** delete the profile on the phone under **Settings →
+  General → VPN & Device Management**, or turn its switch back off under
+  **Certificate Trust Settings**.
+- **What you're trusting:** the CA private key never leaves your Mac and is
+  owner-only. Anyone who both steals `ca-key.pem` *and* can position themselves as
+  a man-in-the-middle on your network could forge a page your phone accepts — so
+  treat `ca-key.pem` like the pairing secret. For the home-LAN threat model this
+  is exactly the transport trust that plain HTTP was missing.
+- This does not replace any of the app-layer crypto; it's defence-in-depth on top
+  of it.
 
 ## The keyboard
 
@@ -347,12 +439,13 @@ secure context (HTTPS/localhost), which plain-HTTP LAN pages are not. So the pag
 ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
 `index.html`), using native Web Crypto for hashing when it *is* available.
 
-**Remaining caveat:** this is application-layer crypto over plain HTTP, not TLS.
-It protects the *contents* of requests, but there's no server-certificate trust,
-so it can't stop an active man-in-the-middle who can rewrite the page itself. For
-a trusted home LAN that's fine; for stronger guarantees, run it behind TLS/VPN —
-which is exactly the kind of choice the DIY delivery menu is there to help you
-make.
+**Remaining caveat:** by default this is application-layer crypto over plain
+HTTP, not TLS. It protects the *contents* of requests, but without a trusted
+server certificate it can't stop an active man-in-the-middle who can rewrite the
+page itself. For a trusted home LAN that's fine; to close the gap, serve it over
+HTTPS with a self-signed certificate you install on your phone — see
+[Serve it over HTTPS](#serve-it-over-https-with-a-self-signed-certificate) — or
+run it behind a VPN like Tailscale.
 
 ## Files
 
@@ -360,7 +453,10 @@ make.
   then starts the server with that Node (forwarding any arguments to `server.js`).
 - `get-node.sh` — fetches an official Node.js build and verifies it against a
   SHA-256 checksum pinned in this repo before unpacking it into `./node`.
-- `server.js` — HTTP server, routing, auth/crypto, static files.
+- `gen-cert.sh` — makes a self-signed TLS certificate with `openssl` (already on
+  macOS) so the server can serve HTTPS; see
+  [Serve it over HTTPS](#serve-it-over-https-with-a-self-signed-certificate).
+- `server.js` — HTTP/HTTPS server, routing, auth/crypto, static files.
 - `executor.js` — turns key actions into AppleScript and runs `osascript`.
 - `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts
   CoreGraphics mouse-move / click / scroll events.

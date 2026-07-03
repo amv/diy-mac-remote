@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -56,6 +57,17 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const SECRET_DIR = path.join(os.homedir(), '.diy-mac-remote');
 const SECRET_FILE = path.join(SECRET_DIR, 'secret');
 const TOKEN_FILE = path.join(SECRET_DIR, 'token.hash');
+
+// TLS (optional). We serve HTTPS whenever a certificate + key exist — generate
+// them with ./gen-cert.sh — and plain HTTP otherwise. `--no-tls` forces HTTP
+// even if the files are present; `--tls` requires them (error out if missing).
+// TLS_CERT / TLS_KEY override the default paths. The app already encrypts every
+// request, so HTTPS is defence-in-depth: it stops an active man-in-the-middle
+// from rewriting the page itself, and makes the page a secure context.
+const TLS_DISABLED = process.argv.slice(2).includes('--no-tls');
+const TLS_FORCED = process.argv.slice(2).includes('--tls');
+const TLS_CERT_FILE = process.env.TLS_CERT || path.join(SECRET_DIR, 'cert.pem');
+const TLS_KEY_FILE = process.env.TLS_KEY || path.join(SECRET_DIR, 'key.pem');
 
 // Refuse to use the secret (or its directory) unless we own it and no other user
 // can touch it — the same stance ssh takes on private keys. Beyond keeping the
@@ -132,6 +144,44 @@ function loadStored() {
   const secret = readOwnedFile(SECRET_FILE);
   const hex = readOwnedFile(TOKEN_FILE);
   return { secret, tokenHash: hex ? Buffer.from(hex, 'hex') : null };
+}
+
+// Load the TLS cert + key, or null to run plain HTTP. The private key is read
+// with the same owner-only enforcement as the secret (it's just as sensitive);
+// the certificate is public, so it's read normally. Returns null when the files
+// are absent — unless `--tls` was given, in which case we insist on them.
+function loadTLS() {
+  if (TLS_DISABLED) return null;
+  let key;
+  try {
+    const fd = fs.openSync(TLS_KEY_FILE, 'r');
+    try {
+      assertOwnerOnly(TLS_KEY_FILE, fs.fstatSync(fd));
+      key = fs.readFileSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err; // perms wrong, etc. — surface it
+    if (TLS_FORCED) {
+      throw new Error(
+        `--tls was requested but no TLS key at ${TLS_KEY_FILE}. Generate one with ` +
+        `./gen-cert.sh (or set TLS_CERT/TLS_KEY), then restart.`
+      );
+    }
+    return null; // no key, no --tls -> fall back to plain HTTP
+  }
+  let cert;
+  try {
+    cert = fs.readFileSync(TLS_CERT_FILE);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    throw new Error(
+      `Found a TLS key at ${TLS_KEY_FILE} but no certificate at ${TLS_CERT_FILE}. ` +
+      `Run ./gen-cert.sh to (re)generate both, then restart.`
+    );
+  }
+  return { key, cert };
 }
 
 // Mint a fresh pairing: generate a master, derive + store the secret and the
@@ -389,6 +439,19 @@ async function dispatchOps(res, ops) {
 // tailnet IP on purpose — it always binds (no EADDRNOTAVAIL race while Tailscale
 // comes up) and the per-request check tolerates the tailnet appearing later or
 // its IP changing. Setting HOST forces a specific bind and opts out of the filter.
+// Present HTTPS if a cert+key are available (see loadTLS), else plain HTTP. The
+// request handling is identical either way; TLS only wraps the transport and
+// flips the advertised scheme to https. Resolved before resolveBase() so the
+// advertised URL (and QR) carries the right scheme.
+let TLS;
+try {
+  TLS = loadTLS();
+} catch (err) {
+  console.error('\n❌ ' + err.message);
+  process.exit(1);
+}
+const SCHEME = TLS ? 'https' : 'http';
+
 const advertised = resolveBase();
 const ENFORCE_TAILNET = !HOST_OVERRIDE && advertised.kind === 'tailscale';
 
@@ -406,7 +469,7 @@ function isTailnetRemote(addr) {
   return /^fd7a:115c:a1e0:/i.test(addr); // Tailscale IPv6 ULA fd7a:115c:a1e0::/48
 }
 
-const server = http.createServer(async (req, res) => {
+async function handler(req, res) {
   // Tailnet-only gate: refuse anything not from the tailnet before it reaches
   // routing, crypto, or the OS-input path (no-op unless ENFORCE_TAILNET).
   if (ENFORCE_TAILNET && !isTailnetRemote(req.socket.remoteAddress)) {
@@ -457,7 +520,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendJSON(res, 405, { error: 'Method not allowed' });
-});
+}
+
+const server = TLS
+  ? https.createServer({ cert: TLS.cert, key: TLS.key }, handler)
+  : http.createServer(handler);
 
 // Docker's default bridge networks live in 172.16.0.0/12 (docker0 is usually
 // 172.17.0.1, compose networks 172.18+). These are almost never the address the
@@ -559,11 +626,11 @@ function resolveBase() {
     else { host = localHostname(); if (host) kind = 'local'; }
   }
 
-  if (host) return { url: `http://${host}:${PORT}/`, kind, tsIp4 };
+  if (host) return { url: `${SCHEME}://${host}:${PORT}/`, kind, tsIp4 };
 
   // No hostname: fall back to auto-detected LAN IPv4 address(es).
   const ips = lanAddresses();
-  if (ips.length) return { url: `http://${ips[0]}:${PORT}/`, kind: 'ip', ips };
+  if (ips.length) return { url: `${SCHEME}://${ips[0]}:${PORT}/`, kind: 'ip', ips };
   return { url: null, kind: 'none' };
 }
 
@@ -601,6 +668,14 @@ server.on('error', (err) => {
 
 server.listen(PORT, bindHost, () => {
   console.log('diy-mac-remote server running.');
+  if (TLS) {
+    console.log(`🔒 Serving HTTPS (cert: ${TLS_CERT_FILE}).`);
+    console.log('   First time on a phone: install & trust the CA once — see');
+    console.log('   README > "Serve it over HTTPS with a self-signed certificate".');
+  } else {
+    console.log('   Serving plain HTTP. To serve HTTPS, run ./gen-cert.sh (uses openssl),');
+    console.log('   then restart. See README > "Serve it over HTTPS...".');
+  }
   if (process.platform !== 'darwin') {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
   }
@@ -647,7 +722,7 @@ server.listen(PORT, bindHost, () => {
     if (ips.length > 1) {
       console.log('\n⚠️  No hostname found — auto-detected several LAN IPs. Any of these');
       console.log('   might be the right one (the QR uses the first):');
-      for (const ip of ips) console.log(`     http://${ip}:${PORT}/`);
+      for (const ip of ips) console.log(`     ${SCHEME}://${ip}:${PORT}/`);
       console.log('   If the QR doesn\'t work, set the right one manually as the first');
       console.log(`   parameter: node server.js http://<ip>:${PORT}/`);
     } else {
