@@ -57,11 +57,15 @@ process.on('exit', () => { for (const c of spawned) { try { c.kill('SIGKILL'); }
 // Start server.js pointed at 127.0.0.1:port with a throwaway HOME, so the test's
 // credentials live in a temp dir. Resolves once it's listening. `out()` returns
 // everything printed so far (banner + QR).
-function startServer({ home, port, args = [] }) {
+function startServer({ home, port, args = [], url, env = {} }) {
   return new Promise((resolve, reject) => {
+    // Default: pass a custom URL so resolveBase() short-circuits to 'custom' (no
+    // host detection). Pass url:null to omit it and let a mode arg (wifi/tailscale/
+    // detect) drive resolution — needed to exercise the tailnet-only source filter.
+    const positional = url === null ? [] : [url || `http://127.0.0.1:${port}/`];
     const child = cp.spawn(process.execPath,
-      ['server.js', `http://127.0.0.1:${port}/`, ...args],
-      { cwd: PROJECT_ROOT, env: { ...process.env, HOME: home, PORT: String(port) } });
+      ['server.js', ...positional, ...args],
+      { cwd: PROJECT_ROOT, env: { ...process.env, HOME: home, PORT: String(port), ...env } });
     spawned.push(child);
     let out = '';
     const timer = setTimeout(() => reject(new Error('server start timeout\n' + out)), 5000);
@@ -111,7 +115,48 @@ function mkTempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'diymac-test-'));
 }
 
+// Write a throwaway `tailscale` CLI (into <dir>/bin) that reports a live tailnet,
+// so the server's detection + tailnet-only filter engage in tests without real
+// Tailscale. Prepend the returned dir to PATH; ip4 becomes this "node's" address.
+function fakeTailscaleBin(dir, ip4) {
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const json = JSON.stringify({
+    BackendState: 'Running',
+    Self: { DNSName: 'testmac.tail9f2c.ts.net.', HostName: 'testmac',
+            TailscaleIPs: [ip4, 'fd7a:115c:a1e0::abcd'] },
+  });
+  fs.writeFileSync(path.join(bin, 'tailscale'),
+    `#!/bin/sh\n[ "$1" = "status" ] && cat <<'JSON'\n${json}\nJSON\n`, { mode: 0o755 });
+  return bin;
+}
+
+// Like httpReq, but choose the destination host and the client's SOURCE address
+// (localAddress) — used to exercise the tailnet source filter (a LAN source must
+// be refused with 403, loopback allowed).
+function httpFrom({ host = '127.0.0.1', port, localAddress, method = 'GET', path: p = '/nonce' }) {
+  const http = require('http');
+  return new Promise((resolve, reject) => {
+    const r = http.request({ host, port, method, path: p, localAddress }, (res) => {
+      let d = ''; res.on('data', (c) => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    r.on('error', reject);
+    r.end();
+  });
+}
+
+// The first non-internal IPv4 on this host (a plausibly-"LAN", non-tailnet source
+// for the filter tests), or null if the box only has loopback.
+function lanIPv4() {
+  const ifs = os.networkInterfaces();
+  for (const k of Object.keys(ifs)) for (const i of ifs[k] || [])
+    if (i.family === 'IPv4' && !i.internal) return i.address;
+  return null;
+}
+
 module.exports = {
   PROJECT_ROOT, sha256hex, deriveCreds, buildEnvelope, getFreePort,
   startServer, stopServer, httpReq, pairMaster, mkTempHome,
+  fakeTailscaleBin, httpFrom, lanIPv4,
 };

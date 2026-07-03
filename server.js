@@ -12,7 +12,11 @@ const mouse = require('./mouse');
 const qrcode = require('./qr');
 
 const PORT = Number(process.env.PORT) || 8765;
-const HOST = process.env.HOST || '0.0.0.0';
+// Explicit bind-address override. When unset we choose the bind per mode at
+// startup: Tailscale mode binds to the tailnet interface ONLY (so the server is
+// unreachable on a co-present untrusted LAN), every other mode binds to all
+// interfaces. Setting HOST forces a specific bind and opts out of that logic.
+const HOST_OVERRIDE = process.env.HOST || null;
 
 // How the address shown/encoded in the QR is built. The server always *listens*
 // on PORT; this only affects what the QR/printed link points at. The secret is
@@ -377,7 +381,38 @@ async function dispatchOps(res, ops) {
   }
 }
 
+// Resolve what to advertise up front (also used for the startup banner). When we
+// auto-advertise Tailscale — detected or explicitly selected, with HOST not
+// overridden — the listener still binds all interfaces, but we accept requests
+// only from tailnet source addresses: a co-present untrusted-LAN peer is refused
+// before any routing, crypto, or input handling. We bind 0.0.0.0 rather than the
+// tailnet IP on purpose — it always binds (no EADDRNOTAVAIL race while Tailscale
+// comes up) and the per-request check tolerates the tailnet appearing later or
+// its IP changing. Setting HOST forces a specific bind and opts out of the filter.
+const advertised = resolveBase();
+const ENFORCE_TAILNET = !HOST_OVERRIDE && advertised.kind === 'tailscale';
+
+// Is a connection's remote (source) address on the tailnet? Filtering on the
+// SOURCE (not the local address) is what stops a LAN attacker: to present a
+// 100.64.0.0/10 source they'd need a TCP handshake whose SYN-ACK routes back over
+// the tailnet, not to them. Caveat: a LAN that itself uses CGNAT 100.64/10 could
+// put a local host in range — rare on home Wi-Fi.
+function isTailnetRemote(addr) {
+  if (!addr) return false;
+  if (addr.startsWith('::ffff:')) addr = addr.slice(7); // unwrap IPv4-mapped IPv6
+  if (addr === '127.0.0.1' || addr === '::1') return true; // loopback stays local (keeps curl/testing working)
+  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(addr);
+  if (m) return Number(m[1]) === 100 && Number(m[2]) >= 64 && Number(m[2]) <= 127; // 100.64.0.0/10
+  return /^fd7a:115c:a1e0:/i.test(addr); // Tailscale IPv6 ULA fd7a:115c:a1e0::/48
+}
+
 const server = http.createServer(async (req, res) => {
+  // Tailnet-only gate: refuse anything not from the tailnet before it reaches
+  // routing, crypto, or the OS-input path (no-op unless ENFORCE_TAILNET).
+  if (ENFORCE_TAILNET && !isTailnetRemote(req.socket.remoteAddress)) {
+    return sendJSON(res, 403, { error: 'Forbidden (tailnet only)' });
+  }
+
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
 
@@ -465,56 +500,66 @@ function localHostname() {
   return name ? name + '.local' : null;
 }
 
-// The Tailscale MagicDNS name (e.g. "mac-air.tailnet-xyz.ts.net"), read straight
-// from the Tailscale daemon — the authoritative source for the tailnet name,
-// which is decoupled from the OS hostname. Uses Self.DNSName (the FQDN, which
-// always resolves via MagicDNS regardless of the device's search domains).
-// Returns null if Tailscale isn't installed/running or no tailnet is up.
-function tailscaleHostname() {
+// This node's identity on the tailnet, read straight from the Tailscale daemon —
+// the authoritative source, decoupled from the OS hostname. Returns { name, ip4 }
+// or null if Tailscale isn't installed/running or no tailnet is up.
+//   name: the MagicDNS FQDN (Self.DNSName — always resolves via MagicDNS
+//         regardless of the device's search domains), else the short HostName.
+//   ip4:  this node's Tailscale IPv4 (100.x CGNAT range, from Self.TailscaleIPs),
+//         or null. We bind the listener to it so the server answers ONLY over the
+//         tailnet, never on a co-present untrusted LAN interface.
+function tailscaleSelf() {
   const bins = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
   for (const bin of bins) {
     const out = sh(bin, ['status', '--json']);
     if (!out) continue;
     try {
       const status = JSON.parse(out);
-      // When Tailscale is switched off the daemon still reports Self.DNSName, so
-      // skip it unless the tailnet is actually up.
+      // When Tailscale is switched off the daemon still reports Self, so skip it
+      // unless the tailnet is actually up.
       if (status.BackendState === 'Stopped') continue;
       const self = status.Self || {};
-      if (self.DNSName) return self.DNSName.replace(/\.$/, ''); // strip trailing dot
-      if (self.HostName) return self.HostName;
+      const name = self.DNSName ? self.DNSName.replace(/\.$/, '') : (self.HostName || null);
+      if (!name) continue; // strip trailing dot from the FQDN above
+      const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
+      const ip4 = ips.find((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)) || null;
+      return { name, ip4 };
     } catch {}
   }
   return null;
 }
 
-// Resolve the address to advertise into { url, kind, ips }, where kind is one of
-// 'custom' | 'tailscale' | 'local' | 'ip' | 'none' (used to tailor the startup
-// banner and warnings). `ips` is the list of auto-detected LAN IPv4 addresses,
-// only set for kind 'ip'. For 'none' there's no address to advertise (url null).
+// Resolve the address to advertise into { url, kind, ips, tsIp4 }, where kind is
+// one of 'custom' | 'tailscale' | 'local' | 'ip' | 'none' (used to tailor the
+// startup banner and warnings). `ips` is the list of auto-detected LAN IPv4
+// addresses, only set for kind 'ip'. `tsIp4` is this node's Tailscale IPv4, set
+// only for kind 'tailscale' — the caller binds the listener to it so the server
+// answers over the tailnet only. For 'none' there's no address to advertise.
 //   tailscale -> MagicDNS name
 //   wifi      -> .local mDNS name
 //   detect    -> MagicDNS name if a tailnet is up, else the .local name
-// All hostname modes fall back to auto-detected LAN IP(s); never to localhost
-// (the phone can't reach the Mac at localhost).
+// Whenever we advertise Tailscale (explicit mode OR detect finding a live
+// tailnet) we also bind to the tailnet only; all other hostname modes fall back
+// to auto-detected LAN IP(s), never to localhost (the phone can't reach that).
 function resolveBase() {
   if (OVERRIDE_URL) return { url: OVERRIDE_URL, kind: 'custom' };
 
   let host = null;
   let kind = null;
+  let tsIp4 = null; // set only when advertising Tailscale: the interface to bind
   if (MODE === 'tailscale') {
-    host = tailscaleHostname();
-    if (host) kind = 'tailscale';
+    const ts = tailscaleSelf();
+    if (ts) { host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4; }
   } else if (MODE === 'wifi') {
     host = localHostname();
     if (host) kind = 'local';
   } else { // detect
-    host = tailscaleHostname();
-    if (host) kind = 'tailscale';
+    const ts = tailscaleSelf();
+    if (ts) { host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4; }
     else { host = localHostname(); if (host) kind = 'local'; }
   }
 
-  if (host) return { url: `http://${host}:${PORT}/`, kind };
+  if (host) return { url: `http://${host}:${PORT}/`, kind, tsIp4 };
 
   // No hostname: fall back to auto-detected LAN IPv4 address(es).
   const ips = lanAddresses();
@@ -539,7 +584,22 @@ function printQR(url) {
   }
 }
 
-server.listen(PORT, HOST, () => {
+// Bind all interfaces (unless HOST is set). The tailnet-only restriction, when it
+// applies, is enforced per-request in the handler above (ENFORCE_TAILNET), not by
+// the bind — so there's no address-not-available race while Tailscale comes up,
+// and it keeps working if the tailnet's IP changes.
+const bindHost = HOST_OVERRIDE || '0.0.0.0';
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Port ${PORT} is already in use. Stop the other process, or set PORT=<n>.`);
+  } else {
+    console.error('\n❌ Server failed to start:', err.message);
+  }
+  process.exit(1);
+});
+
+server.listen(PORT, bindHost, () => {
   console.log('diy-mac-remote server running.');
   if (process.platform !== 'darwin') {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
@@ -551,7 +611,7 @@ server.listen(PORT, HOST, () => {
       : `\nLoaded secret + auth-token hash from ${SECRET_DIR}`
   );
 
-  const { url: base, kind, ips } = resolveBase();
+  const { url: base, kind, ips } = advertised;
 
   // No address at all: the server is still listening on every interface, but
   // there's nothing to advertise — so no QR. Tell the user how to recover.
@@ -596,6 +656,17 @@ server.listen(PORT, HOST, () => {
       console.log(`     node server.js http://<ip>:${PORT}/`);
     }
     console.log('   A LAN address is only safe on a network whose router you trust.');
+  } else if (kind === 'tailscale') {
+    if (ENFORCE_TAILNET) {
+      console.log('\n🔒 Accepting requests from the tailnet only' +
+        (advertised.tsIp4 ? ` (this Mac is ${advertised.tsIp4})` : '') + '.');
+      console.log('   The port is open on all interfaces, but any non-Tailscale source —');
+      console.log('   e.g. a co-present untrusted LAN — is refused with a 403 before it');
+      console.log('   reaches the app.');
+    } else {
+      console.log(`\n⚠️  HOST is set (${bindHost}); the tailnet-only source filter is OFF —`);
+      console.log('   the server trusts whatever can reach that bind address.');
+    }
   }
 
   // Pairing hands the phone the MASTER in the #fragment (never sent to the

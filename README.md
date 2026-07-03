@@ -129,6 +129,18 @@ node server.js --reset-token # rotate the auth token + print a fresh pairing QR
 
 It prints the address to open on your phone plus a QR code to make it easier.
 
+**Tailscale mode restricts access to the tailnet.** Whenever the server
+advertises a Tailscale address — either `tailscale` mode, or the default `detect`
+mode when a tailnet is up — it accepts requests **only** from tailnet source
+addresses (`100.64.0.0/10` or Tailscale's IPv6 range). The port still listens on
+all interfaces, but a request from anywhere else — e.g. a co-present untrusted
+Wi-Fi — is refused with a `403` *before* it reaches any routing, crypto, or input
+handling, so an on-path attacker on that LAN can't drive your Mac or get the page
+to rewrite. (Filtering the source rather than binding one interface avoids a
+startup race with Tailscale and survives your tailnet IP changing. The
+`wifi`/`.local` and raw-IP modes don't filter, as before. Set `HOST=<addr>` to
+bind a single interface and opt out of the filter.)
+
 The QR (and printed link) point at that URL with a single **pairing key** appended
 as the `#fragment` (`#<key>`). The phone derives *two* credentials from it — the
 secret that keys the crypto and a token the server only ever stores hashed (see

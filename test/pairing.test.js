@@ -9,6 +9,7 @@ const { test, assert } = require('./harness');
 const {
   deriveCreds, buildEnvelope, getFreePort,
   startServer, stopServer, httpReq, pairMaster, mkTempHome,
+  fakeTailscaleBin, httpFrom, lanIPv4,
 } = require('./helpers');
 
 // One HOME shared across the restart/reset sequence (tests run in order).
@@ -120,6 +121,56 @@ test('--reset-token rotates the pairing; old creds fail, new creds pass', async 
     assert.strictEqual(r.status, 200, r.body);
   } finally {
     await stopServer(s.child);
+  }
+});
+
+// ---- tailnet-only source filter (Tailscale mode) ----
+// These stand alone (own temp home + port) and stub `tailscale` on PATH so the
+// filter engages regardless of whether this machine really runs Tailscale.
+
+test('tailnet mode refuses a non-tailnet (LAN) source, allows loopback', async () => {
+  const home = mkTempHome();
+  const bin = fakeTailscaleBin(home, '100.101.102.103'); // in 100.64.0.0/10
+  const port = await getFreePort();
+  const s = await startServer({ home, port, url: null, args: ['tailscale'],
+    env: { PATH: `${bin}:${process.env.PATH}` } });
+  try {
+    assert.match(s.out(), /tailnet only/, 'banner should announce the tailnet-only filter');
+
+    // Loopback is treated as local and passes the gate (public /nonce -> 200).
+    const loop = await httpFrom({ host: '127.0.0.1', port, path: '/nonce' });
+    assert.strictEqual(loop.status, 200, 'loopback should pass the gate: ' + loop.body);
+
+    // A LAN source is refused at the gate, before any routing/auth.
+    const lan = lanIPv4();
+    if (lan) {
+      const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
+      assert.strictEqual(r.status, 403, `LAN source should be refused, got ${r.status}`);
+      assert.match(r.body, /tailnet/, 'refusal should mention tailnet');
+    } else {
+      console.log('       (no LAN IPv4 on this host — skipped the deny-path assertion)');
+    }
+  } finally {
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('filter is OFF outside tailnet mode: a LAN source is served normally', async () => {
+  const lan = lanIPv4();
+  if (!lan) { console.log('       (no LAN IPv4 on this host — skipped)'); return; }
+  const home = mkTempHome();
+  const port = await getFreePort();
+  // wifi mode never consults Tailscale, so the filter stays off deterministically
+  // even if the host running the tests happens to have a tailnet up.
+  const s = await startServer({ home, port, url: null, args: ['wifi'] });
+  try {
+    const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
+    assert.notStrictEqual(r.status, 403, 'LAN source must not be filtered outside tailnet mode');
+    assert.strictEqual(r.status, 200, 'public /nonce should answer a LAN client: ' + r.body);
+  } finally {
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
