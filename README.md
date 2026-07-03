@@ -138,7 +138,7 @@ Wi-Fi — is refused with a `403` *before* it reaches any routing, crypto, or in
 handling, so an on-path attacker on that LAN can't drive your Mac or get the page
 to rewrite. (Filtering the source rather than binding one interface avoids a
 startup race with Tailscale and survives your tailnet IP changing. The
-`wifi`/`.local` and raw-IP modes don't filter, as before. Set `HOST=<addr>` to
+`wifi`/`.local` and raw-IP modes don't filter. Set `HOST=<addr>` to
 bind a single interface and opt out of the filter.)
 
 The QR (and printed link) point at that URL with a single **pairing key** appended
@@ -210,6 +210,12 @@ but yourself. You set up a tiny private Certificate Authority (CA) that lives
 only on your Mac, install it on your iPhone **once**, and from then on your phone
 trusts the server.
 
+The CA is **name-constrained**: baked into the certificate you install is the
+list of names and local subnets it may ever vouch for — this Mac's addresses,
+nothing else — and iOS enforces that list. Installing a homemade CA normally
+means trusting it for the *whole web*; this one can never speak for
+`gmail.com`, only for your Mac. (See "What you're trusting" below.)
+
 ### 1. Generate the certificate (on the Mac)
 
 ```sh
@@ -271,6 +277,11 @@ That's it. Open `https://<your-mac>.local:8765/` (or scan the new QR) in
   (add the new IP if needed) and restart the server. The phone keeps working with
   **no reinstall** — the new certificate still chains up to the same CA it already
   trusts. Reaching the Mac by its stable `.local` name avoids this entirely.
+  The CA's name constraints permit whole subnets (your LAN's `/24`, all of
+  Tailscale's range), so routine IP churn stays within them. Only a genuinely
+  new name or network — a renamed Mac, a different LAN — falls outside; the
+  script detects that, refuses to mint a certificate the phone would reject,
+  and prints the two commands to mint a fresh CA (one profile re-install).
 - **Untrusting it later:** delete the profile on the phone under **Settings →
   General → VPN & Device Management**, or turn its switch back off under
   **Certificate Trust Settings**.
@@ -278,7 +289,10 @@ That's it. Open `https://<your-mac>.local:8765/` (or scan the new QR) in
   owner-only. Anyone who both steals `ca-key.pem` *and* can position themselves as
   a man-in-the-middle on your network could forge a page your phone accepts — so
   treat `ca-key.pem` like the pairing secret. For the home-LAN threat model this
-  is exactly the transport trust that plain HTTP was missing.
+  is exactly the transport trust that plain HTTP was missing. Thanks to the name
+  constraints, that is also the *worst* case: a stolen CA key can impersonate
+  this Mac's addresses to your phone, never the rest of the web — so trusting
+  this CA does not put your general browsing in one file's hands.
 - This does not replace any of the app-layer crypto; it's defence-in-depth on top
   of it.
 

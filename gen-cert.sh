@@ -29,6 +29,14 @@
 # changed — to mint a fresh leaf cert, and the phone keeps trusting it because
 # it still chains up to the same CA. The CA is only regenerated if it's missing.
 #
+# The CA is NAME-CONSTRAINED: baked into ca-cert.pem is the list of names and
+# subnets it may ever vouch for (the ones detected below). The phone enforces
+# that list, so even a stolen ca-key.pem can only impersonate this Mac's
+# addresses to your phone — not gmail.com or the rest of the web. IPs are
+# permitted as whole subnets (your LAN's /24, Tailscale's range), so routine
+# IP churn still needs no new CA; only a genuinely new name or network does,
+# and the script detects that case and tells you what to do.
+#
 # Usage
 # -----
 #   ./gen-cert.sh                 # auto-detect this Mac's names/IPs
@@ -122,6 +130,11 @@ $(for n in $DNS_NAMES; do echo "  <li><code>$n</code></li>"; done)
 $(for a in $IP_ADDRS;  do echo "  <li><code>$a</code></li>"; done)
 </ul>
 
+<p>The certificate authority you're installing is <strong>name-constrained</strong>:
+your iPhone will only ever accept it for the addresses above (and their local
+subnets) &mdash; never for other websites. Even in the worst case, a stolen key
+could not be used to impersonate the wider web to your phone.</p>
+
 <h2>Later</h2>
 <p>To remove trust: <strong>Settings &rarr; General &rarr; VPN &amp; Device
 Management</strong>, tap the profile, <strong>Remove Profile</strong>. If your
@@ -209,12 +222,38 @@ ALT="$TMP/alt.cnf"
   i=1; for a in $IP_ADDRS;  do echo "IP.$i = $a";  i=$((i+1)); done
 } > "$ALT"
 
+# Map each detected IP to the subnet the CA will be permitted to vouch for:
+# loopback stays exact, a Tailscale IP permits the whole CGNAT range Tailscale
+# assigns from (tailnet IP churn then never needs a new CA), and a LAN IP
+# permits its /24 (DHCP churn). Name-constraint IPs use base/mask form.
+constraint_subnets() {
+  subs=""
+  for a in $IP_ADDRS; do
+    case "$a" in
+      127.*) s="127.0.0.1/255.255.255.255" ;;
+      100.64.*|100.6[5-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*)
+             s="100.64.0.0/255.192.0.0" ;;
+      *)     s="${a%.*}.0/255.255.255.0" ;;
+    esac
+    case " $subs " in *" $s "*) ;; *) subs="$subs $s" ;; esac
+  done
+  printf '%s\n' $subs
+}
+
 CACNF="$TMP/ca.cnf"
 {
   echo "[v3_ca]"
   echo "basicConstraints = critical, CA:TRUE"
   echo "keyUsage = critical, keyCertSign, cRLSign"
   echo "subjectKeyIdentifier = hash"
+  # The blast-radius limiter (see header): the phone rejects anything this CA
+  # signs for a name/IP outside these subtrees. Critical, so a validator that
+  # can't enforce it refuses the CA rather than ignoring the limit.
+  echo "nameConstraints = critical, @name_constraints"
+  echo
+  echo "[name_constraints]"
+  i=1; for n in $DNS_NAMES; do echo "permitted;DNS.$i = $n"; i=$((i+1)); done
+  i=1; for s in $(constraint_subnets); do echo "permitted;IP.$i = $s"; i=$((i+1)); done
 } > "$CACNF"
 
 # --- Create the CA (only if it doesn't already exist) -------------------------
@@ -231,22 +270,45 @@ else
 fi
 
 # --- Create the leaf key + cert, signed by the CA -----------------------------
+# Everything is built in $TMP and only installed after it validates, so a
+# failed re-run never clobbers a working key + cert.
 echo "Creating the server certificate..."
-openssl genrsa -out "$LEAF_KEY" 2048
-chmod 600 "$LEAF_KEY"
+openssl genrsa -out "$TMP/leaf.key" 2048
 
 # Pick a Common Name for looks (modern clients validate SANs, not the CN).
 PRIMARY="$(printf '%s\n' $DNS_NAMES | grep -v '^localhost$' | head -n1 || true)"
 [ -n "$PRIMARY" ] || PRIMARY="localhost"
 
 CSR="$TMP/leaf.csr"
-openssl req -new -key "$LEAF_KEY" -subj "/CN=$PRIMARY" -out "$CSR"
+openssl req -new -key "$TMP/leaf.key" -subj "/CN=$PRIMARY" -out "$CSR"
 openssl x509 -req -in "$CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial \
   -days "$LEAF_DAYS" -sha256 -extfile "$ALT" -extensions v3_leaf \
   -out "$TMP/leaf.pem"
 
+# Validate the new leaf against the CA the same way the phone will — openssl
+# enforces the CA's name constraints here too. This catches the one re-run
+# that can't work: an existing CA whose constraints don't cover a newly
+# detected name/IP (new network, renamed Mac). Signing alone wouldn't complain;
+# the phone would just refuse the cert later.
+if ! VERIFY_OUT="$(openssl verify -CAfile "$CA_CERT" "$TMP/leaf.pem" 2>&1)"; then
+  echo >&2
+  echo "ERROR: the freshly minted certificate does not validate against your" >&2
+  echo "existing CA — most likely its name constraints don't cover a name/IP" >&2
+  echo "detected on this run. openssl said:" >&2
+  echo "    $VERIFY_OUT" >&2
+  echo >&2
+  echo "Mint a fresh CA covering today's names (then install the new profile" >&2
+  echo "on the iPhone once — README > Serve it over HTTPS):" >&2
+  echo "    rm '$CA_KEY' '$CA_CERT' && $0 $*" >&2
+  echo >&2
+  echo "Your existing certificate and key were left untouched." >&2
+  exit 1
+fi
+
 # Serve the leaf plus the CA (a full chain) so any client validates even if it
 # only trusts the leaf directly.
+cp "$TMP/leaf.key" "$LEAF_KEY"
+chmod 600 "$LEAF_KEY"
 cat "$TMP/leaf.pem" "$CA_CERT" > "$LEAF_CERT"
 chmod 644 "$LEAF_CERT"
 
@@ -254,6 +316,11 @@ echo
 echo "Done. The certificate is valid for:"
 for n in $DNS_NAMES; do echo "    DNS  $n"; done
 for a in $IP_ADDRS;  do echo "    IP   $a"; done
+echo
+echo "The CA itself is name-constrained: your phone will only ever accept it for"
+echo "these names/subnets, never for other websites:"
+for n in $DNS_NAMES; do echo "    DNS  $n (and subdomains)"; done
+for s in $(constraint_subnets); do echo "    IP   $s"; done
 echo
 echo "Files written to $DIR:"
 echo "    ca-cert.pem   -> install this on your iPhone (see README > Serve it over HTTPS)"

@@ -30,22 +30,15 @@ const HOST_OVERRIDE = process.env.HOST || null;
 //   node server.js tailscale   -> Tailscale MagicDNS name (over the tailnet)
 //   node server.js http://host:port/   -> use this URL verbatim (custom override,
 //                                e.g. a domain or port-forward)
-// Back-compat: the --url / --base-url flags and the DIY_MAC_REMOTE_URL env var
-// still set a custom override and take precedence over a mode.
 function parseInvocation() {
-  let url = process.env.DIY_MAC_REMOTE_URL || null;
+  let url = null;
   let mode = null; // 'detect' | 'wifi' | 'tailscale' | null (null => 'detect')
-  const argv = process.argv.slice(2);
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--url' || a === '--base-url') { url = argv[i + 1]; i++; }
-    else if (a.startsWith('--url=')) url = a.slice('--url='.length);
-    else if (a.startsWith('--base-url=')) url = a.slice('--base-url='.length);
-    else if (a.startsWith('-')) continue; // ignore unknown flags
+  for (const a of process.argv.slice(2)) {
+    if (a.startsWith('-')) continue; // flags (--tls, --reset-token, ...) parsed elsewhere
     else if (a === 'wifi' || a === 'tailscale' || a === 'detect') mode = a;
     else if (a.includes('://')) url = a; // bare URL positional => custom override
   }
-  return { url: url || null, mode: mode || 'detect' };
+  return { url, mode: mode || 'detect' };
 }
 const { url: OVERRIDE_URL, mode: MODE } = parseInvocation();
 // `--reset-token` mints a fresh pairing key and prints a new QR (every previously
