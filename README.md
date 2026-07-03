@@ -171,20 +171,39 @@ Notes:
 > its own guide, so you can choose the delivery that matches the trust you have in
 > your network.
 
-## Serve it over HTTPS with a self-signed certificate
+## Serve it over HTTPS
 
 By default `diy-mac-remote` runs over plain HTTP, and that is deliberately safe
 against a *passive* eavesdropper: every keystroke is already encrypted and
 authenticated (ChaCha20 + HMAC) before it leaves the phone. What plain HTTP does
 **not** protect against is an *active* man-in-the-middle on a router you don't
 control — someone positioned to rewrite the web page itself before your phone
-ever loads it (see [Security](#security)). Serving the page over HTTPS with a
-certificate your phone trusts closes that last gap: the phone refuses any page
-that isn't signed by *your* certificate.
-
-As a bonus, an HTTPS page is a browser **"secure context"**, so the native
-`crypto.subtle` becomes available and the page uses it for faster hashing
+ever loads it (see [Security](#security)). Serving the page over HTTPS closes
+that last gap: the phone refuses any page that isn't served under a certificate
+it trusts. As a bonus, an HTTPS page is a browser **"secure context"**, so the
+native `crypto.subtle` becomes available and the page uses it for faster hashing
 instead of the bundled pure-JS fallback.
+
+There are **two ways** to get HTTPS, and one command to pick between them:
+
+```sh
+./setup-https.sh          # interactive: choose option A or B
+./setup-https.sh self     # go straight to the self-signed path
+./setup-https.sh tailscale
+```
+
+| | **A. Self-signed certificate** | **B. Tailscale HTTPS** |
+|---|---|---|
+| Works on | **any** network (Wi-Fi, LAN, hotel) | only over your **tailnet** |
+| iPhone setup | install + trust a cert **once** | **nothing** |
+| Certificate | your own private CA (`openssl`) | real, auto-renewing Let's Encrypt |
+| Depends on | nothing but your Mac | a Tailscale account + MagicDNS |
+| Privacy note | fully offline | machine name goes in a public [CT log](https://certificate.transparency.dev/) |
+
+Pick **A** if you want it to work everywhere and stay fully offline; pick **B**
+if you already use Tailscale and want zero fuss on the phone.
+
+## Option A — self-signed certificate
 
 This uses only tools already on macOS (`openssl`). No download, nothing to trust
 but yourself. You set up a tiny private Certificate Authority (CA) that lives
@@ -262,6 +281,52 @@ That's it. Open `https://<your-mac>.local:8765/` (or scan the new QR) in
   is exactly the transport trust that plain HTTP was missing.
 - This does not replace any of the app-layer crypto; it's defence-in-depth on top
   of it.
+
+## Option B — Tailscale HTTPS
+
+If you already run [Tailscale](https://tailscale.com) on both devices, it can do
+the HTTPS for you: Tailscale obtains a **real, publicly-trusted Let's Encrypt
+certificate** for your Mac's MagicDNS name and terminates TLS in front of the
+server. The upshot is there is **nothing to install or trust on the iPhone** —
+the certificate is already trusted by every device — and it **auto-renews**. The
+trade-off is that it only works while both devices are on the tailnet.
+
+### 1. One-time Tailscale setup
+
+In the Tailscale admin console, enable **MagicDNS** and **HTTPS Certificates**
+on the [DNS page](https://login.tailscale.com/admin/dns). (Enabling HTTPS means
+your machine names appear in a public Certificate Transparency log — that's how
+Let's Encrypt works.) Make sure Tailscale is running and signed in on the Mac.
+
+### 2. Turn it on
+
+```sh
+./setup-https.sh tailscale
+```
+
+This runs `tailscale serve --bg --https=443 http://127.0.0.1:8765`, which tells
+Tailscale to accept HTTPS on your MagicDNS name and reverse-proxy it to the local
+server. It then prints the exact command to start the server — bound to
+**loopback only**, so the plain-HTTP port isn't reachable even from other tailnet
+devices; the *only* way in is through Tailscale's HTTPS:
+
+```sh
+HOST=127.0.0.1 PORT=8765 ./start.sh "https://<your-mac>.<tailnet>.ts.net/"
+```
+
+The QR/link it prints points at that HTTPS address. Open it in **Safari** on the
+phone (same tailnet) — padlock, no warning, no install. Add to Home Screen as
+usual.
+
+### Notes and caveats
+
+- **Turning it off:** `tailscale serve reset` stops the HTTPS proxy.
+- **Certificate:** provisioned and renewed by Tailscale automatically; you never
+  run `tailscale cert` or touch a key file yourself.
+- **Reach:** works only over the tailnet. Off the tailnet, use option A (or a
+  plain LAN address on a network you trust).
+- Like option A, this is transport trust layered on top of the app's own crypto,
+  not a replacement for it.
 
 ## The keyboard
 
@@ -443,9 +508,8 @@ ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
 HTTP, not TLS. It protects the *contents* of requests, but without a trusted
 server certificate it can't stop an active man-in-the-middle who can rewrite the
 page itself. For a trusted home LAN that's fine; to close the gap, serve it over
-HTTPS with a self-signed certificate you install on your phone — see
-[Serve it over HTTPS](#serve-it-over-https-with-a-self-signed-certificate) — or
-run it behind a VPN like Tailscale.
+HTTPS — a self-signed cert you install on your phone, or Tailscale's HTTPS with
+nothing to install — see [Serve it over HTTPS](#serve-it-over-https).
 
 ## Files
 
@@ -453,9 +517,10 @@ run it behind a VPN like Tailscale.
   then starts the server with that Node (forwarding any arguments to `server.js`).
 - `get-node.sh` — fetches an official Node.js build and verifies it against a
   SHA-256 checksum pinned in this repo before unpacking it into `./node`.
-- `gen-cert.sh` — makes a self-signed TLS certificate with `openssl` (already on
-  macOS) so the server can serve HTTPS; see
-  [Serve it over HTTPS](#serve-it-over-https-with-a-self-signed-certificate).
+- `setup-https.sh` — pick how to serve over HTTPS: option A (self-signed) or
+  option B (Tailscale HTTPS); see [Serve it over HTTPS](#serve-it-over-https).
+- `gen-cert.sh` — option A's workhorse: makes a self-signed TLS certificate with
+  `openssl` (already on macOS) and drops the CA + a how-to on your Desktop.
 - `server.js` — HTTP/HTTPS server, routing, auth/crypto, static files.
 - `executor.js` — turns key actions into AppleScript and runs `osascript`.
 - `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts

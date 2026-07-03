@@ -671,10 +671,10 @@ server.listen(PORT, bindHost, () => {
   if (TLS) {
     console.log(`🔒 Serving HTTPS (cert: ${TLS_CERT_FILE}).`);
     console.log('   First time on a phone: install & trust the CA once — see');
-    console.log('   README > "Serve it over HTTPS with a self-signed certificate".');
+    console.log('   README > "Serve it over HTTPS" (option A).');
   } else {
-    console.log('   Serving plain HTTP. To serve HTTPS, run ./gen-cert.sh (uses openssl),');
-    console.log('   then restart. See README > "Serve it over HTTPS...".');
+    console.log('   Serving plain HTTP. To serve HTTPS, run ./setup-https.sh and pick');
+    console.log('   self-signed or Tailscale. See README > "Serve it over HTTPS".');
   }
   if (process.platform !== 'darwin') {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
