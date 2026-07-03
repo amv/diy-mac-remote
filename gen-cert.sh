@@ -135,6 +135,11 @@ HTML
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 
+# Keep it out of Time Machine backups too: a mounted backup hands ca-key.pem and
+# key.pem to whoever reads it, no matter the perms. Sticky xattr, no sudo.
+# Best-effort — the certs matter more than the exclusion.
+tmutil addexclusion "$DIR" 2>/dev/null || true
+
 # --- Collect the names/IPs the certificate should be valid for ----------------
 # We start with localhost, then add this Mac's .local name, any real LAN IPv4
 # addresses, and the Tailscale name/IP if Tailscale is up. Anything you pass on

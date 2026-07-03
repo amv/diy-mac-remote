@@ -217,6 +217,17 @@ let SECRET, TOKEN_HASH, MASTER = null;
 }
 const MINTED = MASTER !== null;
 
+// Keep the credential directory out of Time Machine backups. Everything in it
+// is key material (secret, token.hash, key.pem, ca-key.pem), and owner-only
+// perms mean nothing on a mounted backup — whoever restores it reads it all.
+// The sticky (xattr) form of `tmutil addexclusion` needs no sudo and travels
+// with the directory. Best-effort by design: tmutil can be missing (non-macOS,
+// tests) and a failure here must never stop the server. Trade-off: excluded
+// means not restored — after a disk restore the server mints a fresh pairing.
+if (process.platform === 'darwin') {
+  try { execFileSync('tmutil', ['addexclusion', SECRET_DIR], { stdio: 'ignore' }); } catch {}
+}
+
 // Derive separate subkeys for encryption and authentication (never share a key
 // between the cipher and the MAC). Both are 32 bytes.
 const ENC_KEY = sha256('diy-mac-remote-enc:' + SECRET);

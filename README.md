@@ -499,6 +499,26 @@ attacker can start operating your keyboard and mouse. You do not want that.
      the secret too). This is a hardening of the read-only-disk case, not a new
      trust boundary against an on-network attacker. For that, still use TLS/VPN.
 
+**Backups.** Owner-only file permissions mean nothing on a mounted backup:
+whoever restores a copy of your home directory reads `secret`, `token.hash`,
+and (if you use option A) `key.pem` + `ca-key.pem` — enough to impersonate the
+server to your phone. So the server and `gen-cert.sh` both mark
+`~/.diy-mac-remote/` as **excluded from Time Machine** (`tmutil addexclusion`,
+the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
+
+- **Time Machine only.** Third-party backup tools (Backblaze, Arq, rsync
+  scripts, disk clones) generally ignore the exclusion attribute — check your
+  own tool, or exclude the directory there too.
+- **Tailscale keeps its own keys** (its node key, and the Let's Encrypt private
+  key if you use option B) in its own app data, which *is* backed up. Those are
+  Tailscale's to manage — but unlike your CA key, a stolen node key can be
+  revoked from the admin console.
+- **Excluded means not restored.** After restoring a Mac from backup the server
+  simply mints a fresh pairing on first run (scan the new QR to re-pair), and
+  option A users re-run `./gen-cert.sh` and install the new CA once. That's the
+  point: a restore is exactly the moment you want fresh keys, not old ones with
+  an unknown number of copies.
+
 **Crypto in the browser:** `crypto.subtle` (Web Crypto) is only available in a
 secure context (HTTPS/localhost), which plain-HTTP LAN pages are not. So the page
 ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
