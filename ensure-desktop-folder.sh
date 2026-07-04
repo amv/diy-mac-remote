@@ -114,6 +114,16 @@ on your own Mac, moments ago.</strong> Never install one someone sent you — a
 trusted certificate is powerful. This one's private key never left your Mac.</div>
 
 <h2>1. Send the certificate to the iPhone</h2>
+<p>If the phone does not show up in the AirDrop area, check on the iPhone that:</p>
+<ul>
+  <li><strong>Settings &rarr; General &rarr; AirDrop</strong> is set to
+      <strong>Everyone for 10 Minutes</strong> (the usual fix &mdash;
+      "Contacts Only" often fails to match).</li>
+  <li>Wi-Fi and Bluetooth are both on. (AirDrop connects the devices directly
+      &mdash; they don't need to be on the same Wi-Fi network.)</li>
+  <li>Personal Hotspot is off &mdash; it blocks AirDrop.</li>
+  <li>The phone is unlocked, awake, and near the Mac.</li>
+</ul>
 <ol>
   <li>In this folder, right-click <code>diy-mac-remote-ca.pem</code> &rarr;
       <strong>Share</strong> &rarr; <strong>AirDrop</strong>, and pick your iPhone.</li>
