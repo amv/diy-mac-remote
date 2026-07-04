@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const { run } = require('./executor');
 const chacha20 = require('./chacha20');
 const mouse = require('./mouse');
@@ -50,6 +50,10 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const SECRET_DIR = path.join(os.homedir(), '.diy-mac-remote');
 const SECRET_FILE = path.join(SECRET_DIR, 'secret');
 const TOKEN_FILE = path.join(SECRET_DIR, 'token.hash');
+// Sentinel: dropped once the Time Machine exclusion has been applied to
+// SECRET_DIR, so we never run the (potentially slow) tmutil again. Shared with
+// gen-cert.sh, which honours the same stamp.
+const TM_EXCLUDED_STAMP = path.join(SECRET_DIR, '.backup-excluded');
 
 // TLS (optional). We serve HTTPS whenever a certificate + key exist — generate
 // them with ./gen-cert.sh — and plain HTTP otherwise. `--no-tls` forces HTTP
@@ -177,6 +181,40 @@ function loadTLS() {
   return { key, cert };
 }
 
+// Ensure SECRET_DIR is excluded from Time Machine — exactly once, ever. Everything
+// in it is key material (secret, token.hash, key.pem, ca-key.pem) and owner-only
+// perms mean nothing on a mounted backup: whoever restores it reads it all. The
+// sticky (xattr) form of `tmutil addexclusion` needs no sudo and persists on the
+// directory, so it only needs setting once — but tmutil itself can block 10s+ when
+// Time Machine is busy, so we must not run it on every start. We record success
+// with a stamp file, written ONLY after tmutil returns, and skip the whole thing
+// whenever the stamp exists. A failed/interrupted run leaves no stamp and simply
+// retries next time. Best-effort and macOS-only; a failure must never stop the
+// server. (Trade-off: excluded means not restored — after a disk restore the
+// server mints a fresh pairing.)
+//
+//   sync:true  — block until tmutil returns, then stamp. Used inside mint(), right
+//                after the dir is created and BEFORE the secret/token hash are
+//                written, so cleartext key material never lands in a not-yet-
+//                excluded directory. Bounded by a timeout so a wedged tmutil can't
+//                hang startup (on timeout it throws → no stamp → retried next run).
+//   sync:false — fire-and-forget, stamping in the callback on success. Used at
+//                startup for installs predating the stamp: re-affirm once without
+//                stalling a normal restart.
+function ensureBackupExclusion({ sync = false } = {}) {
+  if (process.platform !== 'darwin') return;
+  if (fs.existsSync(TM_EXCLUDED_STAMP)) return; // already done once — never repeat
+  const stamp = () => { try { fs.writeFileSync(TM_EXCLUDED_STAMP, '', { mode: 0o600 }); } catch {} };
+  try {
+    if (sync) {
+      execFileSync('tmutil', ['addexclusion', SECRET_DIR], { stdio: 'ignore', timeout: 30000 });
+      stamp(); // only after tmutil actually succeeded
+    } else {
+      execFile('tmutil', ['addexclusion', SECRET_DIR], { timeout: 30000 }, (err) => { if (!err) stamp(); });
+    }
+  } catch {}
+}
+
 // Mint a fresh pairing: generate a master, derive + store the secret and the
 // token HASH (owner-only), and DISCARD the master — returning it only so we can
 // print the pairing QR this one time. The master never touches disk.
@@ -187,6 +225,10 @@ function mint() {
     if (err.code !== 'ENOENT') throw err;
     fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
   }
+  // Exclude the (empty) dir from backups BEFORE the secret/token hash land in it,
+  // so a Time Machine snapshot can never capture them in cleartext. Synchronous
+  // on purpose — the writes below must not race ahead of the exclusion.
+  ensureBackupExclusion({ sync: true });
   const master = crypto.randomBytes(16).toString('base64url'); // 128-bit, URL-safe, 22 chars
   const secret = deriveSecret(master);
   const tokenHash = hashToken(deriveToken(master));
@@ -209,16 +251,12 @@ let SECRET, TOKEN_HASH, MASTER = null;
   }
 }
 
-// Keep the credential directory out of Time Machine backups. Everything in it
-// is key material (secret, token.hash, key.pem, ca-key.pem), and owner-only
-// perms mean nothing on a mounted backup — whoever restores it reads it all.
-// The sticky (xattr) form of `tmutil addexclusion` needs no sudo and travels
-// with the directory. Best-effort by design: tmutil can be missing (non-macOS,
-// tests) and a failure here must never stop the server. Trade-off: excluded
-// means not restored — after a disk restore the server mints a fresh pairing.
-if (process.platform === 'darwin') {
-  try { execFileSync('tmutil', ['addexclusion', SECRET_DIR], { stdio: 'ignore' }); } catch {}
-}
+// Robustness for installs created before the stamp existed (or a dir set up by
+// gen-cert.sh alone): make sure the backup exclusion is in place. mint() already
+// did this synchronously on a fresh install, so on the common path the stamp is
+// present and this is a no-op; otherwise it re-affirms once, fire-and-forget, so
+// a busy tmutil can never stall a normal restart.
+ensureBackupExclusion();
 
 // Derive separate subkeys for encryption and authentication (never share a key
 // between the cipher and the MAC). Both are 32 bytes.

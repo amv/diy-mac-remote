@@ -65,9 +65,18 @@ mkdir -p "$DIR"
 chmod 700 "$DIR"
 
 # Keep it out of Time Machine backups too: a mounted backup hands ca-key.pem and
-# key.pem to whoever reads it, no matter the perms. Sticky xattr, no sudo.
-# Best-effort — the certs matter more than the exclusion.
-tmutil addexclusion "$DIR" 2>/dev/null || true
+# key.pem to whoever reads it, no matter the perms. Sticky xattr, no sudo. This
+# MUST land before we write any key material below. tmutil can block 10s+ when
+# Time Machine is busy, so — like server.js — we do it once and record success
+# with a shared stamp file, only writing the stamp after tmutil actually returns
+# (a failed run leaves no stamp and retries next time). Best-effort: if tmutil is
+# missing the certs still matter more than the exclusion.
+STAMP="$DIR/.backup-excluded"
+if [ ! -e "$STAMP" ]; then
+  if tmutil addexclusion "$DIR" 2>/dev/null; then
+    : > "$STAMP" && chmod 600 "$STAMP"
+  fi
+fi
 
 # --- Collect the names/IPs the certificate should be valid for ----------------
 # Auto-detection adds exactly one name: this Mac's .local (Bonjour) address.
