@@ -23,6 +23,24 @@ ObjC.import('CoreGraphics');
 function loc(){ return $.CGEventGetLocation($.CGEventCreate($())); }
 function post(ev){ $.CGEventPost(0, ev); }
 var leftDown = false, rightDown = false;
+// macOS doesn't infer double-clicks from timing on synthesized events: the
+// kCGMouseEventClickState field (CGEventField 1) must be 2 on the second
+// down/up pair or the OS treats them as two single clicks. Track recent
+// clicks (same button, within the double-click window and a few px) and
+// stamp the running count on each event.
+var last = { t: 0, x: 0, y: 0, btn: -1, count: 0 };
+var downCount = { 0: 1, 1: 1 };
+function clickCount(btn, p){
+  var now = Date.now();
+  if(btn === last.btn && now - last.t < 500 &&
+     Math.abs(p.x - last.x) < 10 && Math.abs(p.y - last.y) < 10){
+    last.count++;
+  } else {
+    last.count = 1;
+  }
+  last.t = now; last.x = p.x; last.y = p.y; last.btn = btn;
+  return last.count;
+}
 function handle(line){
   line = line.trim();
   if(!line) return;
@@ -36,17 +54,27 @@ function handle(line){
     post($.CGEventCreateMouseEvent($(), type, mp, btn));
   } else if(c.k === 'cl'){
     var l2 = loc(); var p = $.CGPointMake(l2.x, l2.y);
-    var right = c.btn === 'r';
-    post($.CGEventCreateMouseEvent($(), right ? 3 : 1, p, right ? 1 : 0));
-    post($.CGEventCreateMouseEvent($(), right ? 4 : 2, p, right ? 1 : 0));
+    var right = c.btn === 'r'; var b = right ? 1 : 0;
+    var n = clickCount(b, p);
+    var dn = $.CGEventCreateMouseEvent($(), right ? 3 : 1, p, b);
+    $.CGEventSetIntegerValueField(dn, 1, n);
+    post(dn);
+    var up = $.CGEventCreateMouseEvent($(), right ? 4 : 2, p, b);
+    $.CGEventSetIntegerValueField(up, 1, n);
+    post(up);
   } else if(c.k === 'dn'){
-    var ld = loc(); var rd = c.btn === 'r';
+    var ld = loc(); var rd = c.btn === 'r'; var bd = rd ? 1 : 0;
     if(rd) rightDown = true; else leftDown = true;
-    post($.CGEventCreateMouseEvent($(), rd ? 3 : 1, $.CGPointMake(ld.x, ld.y), rd ? 1 : 0));
+    downCount[bd] = clickCount(bd, ld);
+    var evd = $.CGEventCreateMouseEvent($(), rd ? 3 : 1, $.CGPointMake(ld.x, ld.y), bd);
+    $.CGEventSetIntegerValueField(evd, 1, downCount[bd]);
+    post(evd);
   } else if(c.k === 'up'){
-    var lu = loc(); var ru = c.btn === 'r';
+    var lu = loc(); var ru = c.btn === 'r'; var bu = ru ? 1 : 0;
     if(ru) rightDown = false; else leftDown = false;
-    post($.CGEventCreateMouseEvent($(), ru ? 4 : 2, $.CGPointMake(lu.x, lu.y), ru ? 1 : 0));
+    var evu = $.CGEventCreateMouseEvent($(), ru ? 4 : 2, $.CGPointMake(lu.x, lu.y), bu);
+    $.CGEventSetIntegerValueField(evu, 1, downCount[bu]);
+    post(evu);
   } else if(c.k === 'sc'){
     post($.CGEventCreateScrollWheelEvent($(), 0, 1, c.dy));
   }
