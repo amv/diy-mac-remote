@@ -1,13 +1,24 @@
 #!/bin/sh
 #
-# get-node.sh — fetch a known-good Node.js and unpack it into ./node
+# ensure-node.sh — make sure ./node/bin/node is a working Node.js.
 #
-# Why this script exists
-# ----------------------
-# diy-mac-remote runs on Node.js. Rather than trust whatever `node` happens to
-# be on your machine (or ask you to install one through some other channel),
-# this script fetches one specific Node.js build and checks it against a
-# checksum that is *baked into this repository*.
+# Idempotent — run it as often as you like. In order:
+#
+#   1. ./node/bin/node already runs        -> nothing to do (prints nothing)
+#   2. a pre-installed Node v18+ is found  -> symlink it to ./node/bin/node
+#   3. no usable Node anywhere             -> download one specific Node.js
+#      build and verify it against a checksum baked into this repository
+#      (the rest of this header explains why that beats a plain download)
+#
+# Either way the server always starts from the same path, ./node/bin/node.
+# Prefer the pinned, checksum-verified build over whatever Node is installed?
+# Run with --download to skip step 2.
+#
+# Why the pinned download (step 3) works the way it does
+# ------------------------------------------------------
+# If you have no Node — or would rather not trust the one that happens to be on
+# your machine — this script fetches one specific Node.js build and checks it
+# against a checksum that is *baked into this repository*.
 #
 # The subtle point: Node.js publishes its own checksum file at
 #   https://nodejs.org/dist/v26.3.1/SHASUMS256.txt
@@ -35,6 +46,50 @@ EXPECTED_SHA256_ARM64="49aca22a8c2992c16688baa512a7b00c41a4608e9675fcaa81534767b
 EXPECTED_SHA256_X64="dac58e340c721332d331a44c9ee2e126b26632c42d3028eb2ceb5c3f218798fa"
 
 set -eu   # -e: stop on the first error.  -u: error on unset variables.
+
+# Work in this script's own directory, so ./node always lands next to the repo
+# scripts no matter where the caller happens to be (e.g. a double-clicked
+# .command file starts in $HOME).
+cd "$(dirname "$0")"
+
+FORCE_DOWNLOAD=false
+case "${1:-}" in
+  --download) FORCE_DOWNLOAD=true ;;
+  "") ;;
+  *) echo "Unknown option: $1 (only --download is supported)" >&2; exit 1 ;;
+esac
+
+# --- 1. Already ensured? ------------------------------------------------------
+# Actually run it rather than just testing for the file: this also catches a
+# dangling symlink (a system Node that was later uninstalled) or a
+# half-unpacked download, and falls through to fix either.
+if ! $FORCE_DOWNLOAD && [ -x node/bin/node ] && node/bin/node --version >/dev/null 2>&1; then
+  exit 0
+fi
+
+# --- 2. A pre-installed Node? -------------------------------------------------
+# If a system Node exists and is recent enough, link it to ./node/bin/node so
+# everything downstream keeps using that one fixed path. We look in PATH and in
+# the usual install locations PATH may lack when Finder launches a .command
+# file. v18 is a floor for the APIs the server uses, not an endorsement — the
+# pinned download below is v26.
+if ! $FORCE_DOWNLOAD; then
+  for cand in "$(command -v node 2>/dev/null || true)" \
+              /usr/local/bin/node /opt/homebrew/bin/node; do
+    [ -n "$cand" ] && [ -x "$cand" ] || continue
+    case "$cand" in "$(pwd)"/node/bin/node) continue ;; esac  # never self-link
+    MAJOR="$("$cand" --version 2>/dev/null | sed 's/^v//; s/\..*//')"
+    case "$MAJOR" in *[!0-9]*|"") continue ;; esac
+    [ "$MAJOR" -ge 18 ] || continue
+    echo "Linking pre-installed Node.js ($("$cand" --version), $cand) to ./node/bin/node"
+    rm -rf node
+    mkdir -p node/bin
+    ln -s "$cand" node/bin/node
+    exit 0
+  done
+fi
+
+# --- 3. Nothing usable: download the pinned build ------------------------------
 
 # --- Pick the right build for this Mac --------------------------------------
 
@@ -127,6 +182,3 @@ echo "Unpacking into ./${DEST_DIR}"
 tar -xf "$TARBALL" -C "$DEST_DIR" --strip-components=1
 
 echo "Done. Node.js ${NODE_VERSION} is in ./${DEST_DIR}"
-echo ""
-echo "You can now start the server with this Node:"
-echo "  ./${DEST_DIR}/bin/node server.js"

@@ -58,9 +58,9 @@ the recipes.
 
 - macOS
 - iPhone
-- Node.js — don't have it, or don't trust the one already on your machine? Run
-  [`get-node.sh`](get-node.sh) to fetch an official build and verify it against a
-  checksum pinned in this repo (see [Get a verified Node.js](#get-a-verified-nodejs)).
+- Node.js — [`ensure-node.sh`](ensure-node.sh) takes care of this: it links a
+  Node you already have, or fetches an official build and verifies it against a
+  checksum pinned in this repo (see [Get a Node.js](#get-a-nodejs)).
 - This repository.
 - **Accessibility permission:** the first time it sends a key, macOS will ask to allow your Terminal *System Settings → Privacy & Security → Accessibility*. Grant it.
 
@@ -74,11 +74,12 @@ the recipes.
 The simplest delivery method: run the server from source and load the app over
 your LAN. No build step, no signing, no store.
 
-The fastest path is [`start.sh`](start.sh), which gets a verified Node.js (only
-if you don't already have one unpacked) and starts the server for you:
+The fastest path is [`start.sh`](start.sh), which makes sure there's a Node.js
+to run on (`ensure-node.sh`, a no-op when there already is) and starts the
+server for you:
 
 ```sh
-./start.sh                # fetches ./node if needed, then runs the server
+./start.sh                # ensures ./node, then runs the server
 ./start.sh tailscale      # any arguments are forwarded to server.js
 ```
 
@@ -87,34 +88,38 @@ Mac. The rest of this section explains each step if you'd rather run them by han
 
 1. Open your Terminal.
 2. Clone this repo with git on your machine.
-3. Get Node.js — use your own, or run [`get-node.sh`](get-node.sh) (see below).
+3. Get Node.js — run [`ensure-node.sh`](ensure-node.sh) (see below).
 4. Run the server with Node.js (see below).
 5. Scan the QR code with your iPhone.
 6. Grant Accessibility rights for Terminal.
 7. Use the web app to control your Mac.
 8. (optional) Add it to your Home Screen as a full-screen app.
 
-### Get a verified Node.js
+### Get a Node.js
 
-If you don't already have Node.js — or you'd rather not trust the copy that's on
-your machine — run the bundled script to fetch an official build and check it
-against a SHA-256 checksum **pinned in this repository**:
+The bundled script makes sure `./node/bin/node` is a working Node.js, and is
+**idempotent** — run it as often as you like:
 
 ```sh
-./get-node.sh                 # downloads, verifies, unpacks into ./node
-./node/bin/node --version     # should print v26.3.1
+./ensure-node.sh              # no-op if ./node/bin/node already works;
+                              # else links your Node, or downloads + verifies one
+./ensure-node.sh --download   # insist on the pinned, checksum-verified build
+./node/bin/node --version     # v26.3.1 if downloaded; your own version if linked
 ```
 
-The script refuses to unpack anything unless the download's checksum matches the
-one committed here. This is on purpose, and it's stronger than trusting the
-checksum Node.js publishes alongside the download: if an attacker controlled
-nodejs.org they could serve a malicious tarball *and* a matching checksum. By
-pinning the hash in this repo, fooling you requires compromising **both**
-nodejs.org **and** this repository — the same "split your trust" idea the rest of
-`diy-mac-remote` is built on.
+If you already have Node.js (v18 or newer), it just symlinks it to
+`./node/bin/node` so everything downstream uses one fixed path. Otherwise — or
+with `--download`, if you'd rather not trust the copy on your machine — it
+fetches an official build and checks it against a SHA-256 checksum **pinned in
+this repository**, refusing to unpack anything on a mismatch. That's stronger
+than trusting the checksum Node.js publishes alongside the download: if an
+attacker controlled nodejs.org they could serve a malicious tarball *and* a
+matching checksum. By pinning the hash in this repo, fooling you requires
+compromising **both** nodejs.org **and** this repository — the same "split your
+trust" idea the rest of `diy-mac-remote` is built on.
 
-> The script detects your Mac's CPU with `uname -m` and fetches the matching
-> build — Apple Silicon (arm64) or Intel (x64). Once it's unpacked, use
+> The download detects your Mac's CPU with `uname -m` and fetches the matching
+> build — Apple Silicon (arm64) or Intel (x64). Once `./node` exists, use
 > `./node/bin/node server.js` in place of `node server.js` below.
 
 ### Run the server
@@ -139,7 +144,16 @@ handling, so an on-path attacker on that LAN can't drive your Mac or get the pag
 to rewrite. (Filtering the source rather than binding one interface avoids a
 startup race with Tailscale and survives your tailnet IP changing. The
 `wifi`/`.local` and raw-IP modes don't filter. Set `HOST=<addr>` to
-bind a single interface and opt out of the filter.)
+bind a single interface and opt out of the filter.) Explicit `tailscale` mode is
+strict about it: if no tailnet is up when the server starts, it **refuses to
+start** rather than silently falling back to an unfiltered LAN address (the
+default `detect` mode does fall back — that's the difference between them).
+
+Prefer double-clicking? [`install-tailscale.command`](install-tailscale.command)
+sets this path up: it makes sure there's a Node.js to run on and puts a
+`start.command` into the `diy-mac-remote` folder on the Desktop — no certificate
+involved. The generated `start.command` has `tailscale` mode baked in, so a
+double-click can never accidentally start the server in a less strict mode.
 
 The QR (and printed link) point at that URL with a single **pairing key** appended
 as the `#fragment` (`#<key>`). The phone derives *two* credentials from it — the
@@ -184,81 +198,68 @@ it trusts. As a bonus, an HTTPS page is a browser **"secure context"**, so the
 native `crypto.subtle` becomes available and the page uses it for faster hashing
 instead of the bundled pure-JS fallback.
 
-There are **two ways** to get HTTPS, and one command to pick between them:
-
-```sh
-./setup-https.sh          # interactive: choose option A or B
-./setup-https.sh self     # go straight to the self-signed path
-./setup-https.sh tailscale
-```
-
-| | **A. Self-signed certificate** | **B. Tailscale HTTPS** |
-|---|---|---|
-| Works on | **any** network (Wi-Fi, LAN, hotel) | only over your **tailnet** |
-| iPhone setup | install + trust a cert **once** | **nothing** |
-| Certificate | your own private CA (`openssl`) | real, auto-renewing Let's Encrypt |
-| Depends on | nothing but your Mac | a Tailscale account + MagicDNS |
-| Privacy note | fully offline | machine name goes in a public [CT log](https://certificate.transparency.dev/) |
-
-Pick **A** if you want it to work everywhere and stay fully offline; pick **B**
-if you already use Tailscale and want zero fuss on the phone.
-
-## Option A — self-signed certificate
-
-This uses only tools already on macOS (`openssl`). No download, nothing to trust
+HTTPS here means a **self-signed certificate**, using only tools already on
+macOS (`openssl`). No download, no accounts, fully offline — nothing to trust
 but yourself. You set up a tiny private Certificate Authority (CA) that lives
-only on your Mac, install it on your iPhone **once**, and from then on your phone
-trusts the server.
+only on your Mac, install it on your iPhone **once**, and from then on your
+phone trusts the server.
 
 The CA is **name-constrained**: baked into the certificate you install is the
-list of names and local subnets it may ever vouch for — this Mac's addresses,
-nothing else — and iOS enforces that list. Installing a homemade CA normally
+list of names it may ever vouch for — by default exactly one, this Mac's
+`.local` name — and iOS enforces that list. Installing a homemade CA normally
 means trusting it for the *whole web*; this one can never speak for
 `gmail.com`, only for your Mac. (See "What you're trusting" below.)
 
-### 1. Generate the certificate (on the Mac)
+### 1. Run the setup (on the Mac)
+
+Double-click [`install-self-signed.command`](install-self-signed.command) in
+Finder (it opens a Terminal window and keeps it open so you can read the
+steps; it also sets up Node.js in the background — see
+[Get a Node.js](#get-a-nodejs)), or run the same thing yourself:
 
 ```sh
-./gen-cert.sh                       # auto-detect this Mac's .local name, LAN IPs, Tailscale name
-./gen-cert.sh mymac.local 10.0.0.9  # ...plus any extra name/IP the phone will use
+./setup-https.sh                       # certificate for this Mac's .local name
+./setup-https.sh mymac.local 10.0.0.9  # ...plus any extra name/IP the phone will use
 ```
 
-A certificate is only valid for the names and IPs baked into it, so if you'll
-reach the Mac by an address the script didn't auto-detect, pass it as an
-argument. This writes four files into `~/.diy-mac-remote/` (owner-only, the same
-place the pairing secret lives):
+By default the certificate covers **only the Mac's `.local` address** — no
+localhost, no LAN IPs, no Tailscale names — because that's the one stable
+address your phone uses on the Wi-Fi, and a narrow certificate keeps the CA's
+reach narrow too. A certificate is only valid for the names baked into it, so
+if your phone will reach the Mac by some *other* address, pass it as an
+argument (this is [`gen-cert.sh`](gen-cert.sh) doing the work; arguments are
+forwarded to it).
+
+This writes four files into `~/.diy-mac-remote/` (owner-only, the same place
+the pairing secret lives):
 
 - `ca-cert.pem` — your CA. **This is the file you put on the iPhone.** It's public; it's safe to copy around.
 - `ca-key.pem` — the CA's private key. Stays on the Mac, owner-only. Whoever holds this can mint certs your phone will trust, so don't copy it off the machine.
 - `cert.pem` / `key.pem` — the server's certificate and private key, served automatically.
 
-### 2. Start the server
+It then refreshes a `diy-mac-remote` folder on your Desktop (via
+[`ensure-desktop-folder.sh`](ensure-desktop-folder.sh)) and opens it in Finder.
+The folder holds everything the human side of the setup needs:
 
-Nothing new to type — the server serves HTTPS automatically as soon as those
-files exist, and the printed QR/link switches to `https://`:
+- `diy-mac-remote-ca.pem` — the CA, ready to AirDrop to the phone (only ever
+  the public certificate — never a private key);
+- `HOWTO-AIRDROP-CERT-TO-PHONE.html` — step-by-step install instructions,
+  listing the exact names the current certificate is valid for;
+- `start.command` — double-click to start the server (it points at `start.sh`
+  wherever this repo lives).
 
-```sh
-./start.sh
-```
+### 2. Install and trust the CA on the iPhone (once)
 
-To temporarily go back to plain HTTP, start with `--no-tls`. To *require* HTTPS
-(fail loudly if the cert is missing rather than silently falling back), use
-`--tls`.
+You need to get the CA onto the phone and then flip **two** switches —
+installing a certificate and *trusting* it are separate steps on iOS. The
+`HOWTO-AIRDROP-CERT-TO-PHONE.html` in the Desktop folder walks you through
+exactly this:
 
-### 3. Install and trust the CA on the iPhone (once)
-
-You need to get `~/.diy-mac-remote/ca-cert.pem` onto the phone and then flip
-**two** switches — installing a certificate and *trusting* it are separate steps
-on iOS.
-
-1. **Get the file onto the phone.** `gen-cert.sh` already dropped a copy in a
-   `diy-mac-remote` folder on your Desktop (alongside a
-   `HOWTO-AIRDROP-CERT-TO-PHONE.html` with these same steps) and opened it in
-   Finder — right-click `diy-mac-remote-ca.pem` → **Share → AirDrop** → your
-   iPhone. (If AirDrop doesn't offer to install it,
-   email the file to yourself and open it in the Mail app instead. Some iOS
-   versions are fussy about the extension — if so, rename the copy to
-   `diy-mac-remote-ca.crt` and send that.)
+1. **Get the file onto the phone.** In the Desktop folder, right-click
+   `diy-mac-remote-ca.pem` → **Share → AirDrop** → your iPhone. (If AirDrop
+   doesn't offer to install it, email the file to yourself and open it in the
+   Mail app instead. Some iOS versions are fussy about the extension — if so,
+   rename the copy to `diy-mac-remote-ca.crt` and send that.)
 2. iOS says **"Profile Downloaded"**. Open **Settings** → it shows **Profile
    Downloaded** near the top (or go to **Settings → General → VPN & Device
    Management**).
@@ -268,20 +269,43 @@ on iOS.
    About → Certificate Trust Settings**. Under **Enable Full Trust for Root
    Certificates**, turn **ON** the switch for **diy-mac-remote local CA**.
 
-That's it. Open `https://<your-mac>.local:8765/` (or scan the new QR) in
-**Safari** — no warning, a padlock, and you can Add to Home Screen as before.
+### 3. Start the server
+
+Double-click `start.command` (in the Desktop folder or in the repo), or run
+`./start.sh`. Nothing new to type — the server serves HTTPS automatically as
+soon as the certificate files exist, and the printed QR/link switches to
+`https://`:
+
+```sh
+./start.sh
+```
+
+Scan the QR in **Safari** — no warning, a padlock — pair, and Add to Home
+Screen. To temporarily go back to plain HTTP, start with `--no-tls`. To
+*require* HTTPS (fail loudly if the cert is missing rather than silently
+falling back), use `--tls`.
 
 ### Notes and caveats
 
-- **Changing address?** If the Mac's LAN IP changes, just re-run `./gen-cert.sh`
-  (add the new IP if needed) and restart the server. The phone keeps working with
-  **no reinstall** — the new certificate still chains up to the same CA it already
-  trusts. Reaching the Mac by its stable `.local` name avoids this entirely.
-  The CA's name constraints permit whole subnets (your LAN's `/24`, all of
-  Tailscale's range), so routine IP churn stays within them. Only a genuinely
-  new name or network — a renamed Mac, a different LAN — falls outside; the
-  script detects that, refuses to mint a certificate the phone would reject,
-  and prints the two commands to mint a fresh CA (one profile re-install).
+- **Re-running is always safe.** `./setup-https.sh` (or
+  `install-self-signed.command`) mints a fresh server certificate and
+  refreshes the Desktop folder, but reuses
+  the CA — so the phone keeps trusting the new certificate with **no
+  reinstall**. Re-run it after renaming the Mac, or to add an extra name.
+- **The certificate names only the `.local` address**, so reach the Mac by that
+  name. IP churn doesn't matter (there are no IPs in the certificate), and the
+  `.local` name is stable. If you *must* use another address — a raw IP, a
+  Tailscale MagicDNS name — pass it to `./setup-https.sh` explicitly; the
+  server warns at startup if it's about to advertise an address the certificate
+  doesn't cover. Note that a genuinely new name (a renamed Mac) falls outside
+  the existing CA's name constraints; the script detects that, refuses to mint
+  a certificate the phone would reject, and prints the two commands to mint a
+  fresh CA (one profile re-install).
+- **HTTPS + Tailscale mode:** the default certificate doesn't cover the MagicDNS
+  name, so when serving HTTPS the default `detect` mode advertises the `.local`
+  name even when a tailnet is up. Explicit `./start.sh tailscale` still works —
+  add the MagicDNS name to the certificate first
+  (`./setup-https.sh <mac>.<tailnet>.ts.net`).
 - **Untrusting it later:** delete the profile on the phone under **Settings →
   General → VPN & Device Management**, or turn its switch back off under
   **Certificate Trust Settings**.
@@ -295,52 +319,6 @@ That's it. Open `https://<your-mac>.local:8765/` (or scan the new QR) in
   this CA does not put your general browsing in one file's hands.
 - This does not replace any of the app-layer crypto; it's defence-in-depth on top
   of it.
-
-## Option B — Tailscale HTTPS
-
-If you already run [Tailscale](https://tailscale.com) on both devices, it can do
-the HTTPS for you: Tailscale obtains a **real, publicly-trusted Let's Encrypt
-certificate** for your Mac's MagicDNS name and terminates TLS in front of the
-server. The upshot is there is **nothing to install or trust on the iPhone** —
-the certificate is already trusted by every device — and it **auto-renews**. The
-trade-off is that it only works while both devices are on the tailnet.
-
-### 1. One-time Tailscale setup
-
-In the Tailscale admin console, enable **MagicDNS** and **HTTPS Certificates**
-on the [DNS page](https://login.tailscale.com/admin/dns). (Enabling HTTPS means
-your machine names appear in a public Certificate Transparency log — that's how
-Let's Encrypt works.) Make sure Tailscale is running and signed in on the Mac.
-
-### 2. Turn it on
-
-```sh
-./setup-https.sh tailscale
-```
-
-This runs `tailscale serve --bg --https=443 http://127.0.0.1:8765`, which tells
-Tailscale to accept HTTPS on your MagicDNS name and reverse-proxy it to the local
-server. It then prints the exact command to start the server — bound to
-**loopback only**, so the plain-HTTP port isn't reachable even from other tailnet
-devices; the *only* way in is through Tailscale's HTTPS:
-
-```sh
-HOST=127.0.0.1 PORT=8765 ./start.sh "https://<your-mac>.<tailnet>.ts.net/"
-```
-
-The QR/link it prints points at that HTTPS address. Open it in **Safari** on the
-phone (same tailnet) — padlock, no warning, no install. Add to Home Screen as
-usual.
-
-### Notes and caveats
-
-- **Turning it off:** `tailscale serve reset` stops the HTTPS proxy.
-- **Certificate:** provisioned and renewed by Tailscale automatically; you never
-  run `tailscale cert` or touch a key file yourself.
-- **Reach:** works only over the tailnet. Off the tailnet, use option A (or a
-  plain LAN address on a network you trust).
-- Like option A, this is transport trust layered on top of the app's own crypto,
-  not a replacement for it.
 
 ## The keyboard
 
@@ -515,7 +493,7 @@ attacker can start operating your keyboard and mouse. You do not want that.
 
 **Backups.** Owner-only file permissions mean nothing on a mounted backup:
 whoever restores a copy of your home directory reads `secret`, `token.hash`,
-and (if you use option A) `key.pem` + `ca-key.pem` — enough to impersonate the
+and (if you use HTTPS) `key.pem` + `ca-key.pem` — enough to impersonate the
 server to your phone. So the server and `gen-cert.sh` both mark
 `~/.diy-mac-remote/` as **excluded from Time Machine** (`tmutil addexclusion`,
 the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
@@ -523,13 +501,12 @@ the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
 - **Time Machine only.** Third-party backup tools (Backblaze, Arq, rsync
   scripts, disk clones) generally ignore the exclusion attribute — check your
   own tool, or exclude the directory there too.
-- **Tailscale keeps its own keys** (its node key, and the Let's Encrypt private
-  key if you use option B) in its own app data, which *is* backed up. Those are
-  Tailscale's to manage — but unlike your CA key, a stolen node key can be
-  revoked from the admin console.
+- **Tailscale keeps its own keys** (its node key) in its own app data, which
+  *is* backed up. Those are Tailscale's to manage — but unlike your CA key, a
+  stolen node key can be revoked from the admin console.
 - **Excluded means not restored.** After restoring a Mac from backup the server
   simply mints a fresh pairing on first run (scan the new QR to re-pair), and
-  option A users re-run `./gen-cert.sh` and install the new CA once. That's the
+  HTTPS users re-run `./setup-https.sh` and install the new CA once. That's the
   point: a restore is exactly the moment you want fresh keys, not old ones with
   an unknown number of copies.
 
@@ -542,19 +519,35 @@ ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
 HTTP, not TLS. It protects the *contents* of requests, but without a trusted
 server certificate it can't stop an active man-in-the-middle who can rewrite the
 page itself. For a trusted home LAN that's fine; to close the gap, serve it over
-HTTPS — a self-signed cert you install on your phone, or Tailscale's HTTPS with
-nothing to install — see [Serve it over HTTPS](#serve-it-over-https).
+HTTPS — a self-signed cert you install on your phone once — see
+[Serve it over HTTPS](#serve-it-over-https).
 
 ## Files
 
-- `start.sh` — one-command launcher: runs `get-node.sh` if `./node` is missing,
-  then starts the server with that Node (forwarding any arguments to `server.js`).
-- `get-node.sh` — fetches an official Node.js build and verifies it against a
-  SHA-256 checksum pinned in this repo before unpacking it into `./node`.
-- `setup-https.sh` — pick how to serve over HTTPS: option A (self-signed) or
-  option B (Tailscale HTTPS); see [Serve it over HTTPS](#serve-it-over-https).
-- `gen-cert.sh` — option A's workhorse: makes a self-signed TLS certificate with
-  `openssl` (already on macOS) and drops the CA + a how-to on your Desktop.
+- `start.sh` — one-command launcher: runs `ensure-node.sh`, then starts the
+  server with `./node/bin/node` (forwarding any arguments to `server.js`).
+- `ensure-node.sh` — idempotently makes sure `./node/bin/node` works: a no-op
+  if it already does, else it symlinks a pre-installed Node (v18+), else it
+  fetches an official build and verifies it against a SHA-256 checksum pinned
+  in this repo before unpacking it into `./node` (`--download` forces this).
+- `setup-https.sh` — one-command HTTPS setup: generates the certificate
+  (`gen-cert.sh`) and refreshes the Desktop folder (`ensure-desktop-folder.sh`);
+  see [Serve it over HTTPS](#serve-it-over-https).
+- `install-self-signed.command` — double-clickable wrapper around
+  `setup-https.sh`: opens a Terminal window, runs the setup (with
+  `ensure-node.sh` in the background), and stays open so you can read the
+  steps.
+- `install-tailscale.command` — double-clickable setup for the Tailscale path:
+  runs `ensure-node.sh` and drops just a `start.command` (with `tailscale` mode
+  baked in) into the Desktop folder — no certificate, nothing to install on the
+  phone.
+- `start.command` — double-clickable wrapper around `start.sh`.
+- `gen-cert.sh` — the certificate workhorse: makes a self-signed TLS certificate
+  with `openssl` (already on macOS) for this Mac's `.local` name (plus any
+  names/IPs you pass).
+- `ensure-desktop-folder.sh` — makes sure the `diy-mac-remote` folder on the
+  Desktop is up to date: the CA ready to AirDrop, an HTML how-to matching the
+  current certificate, and a `start.command` pointing at this repo.
 - `server.js` — HTTP/HTTPS server, routing, auth/crypto, static files.
 - `executor.js` — turns key actions into AppleScript and runs `osascript`.
 - `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts

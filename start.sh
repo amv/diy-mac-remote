@@ -4,10 +4,11 @@
 #
 # What this does
 # --------------
-# 1. If ./node isn't already unpacked, run get-node.sh to fetch and verify a
-#    known-good Node.js build (see the long explanation in that script).
-# 2. Start the server using *that* Node — never whatever `node` happens to be
-#    on your PATH — so the code always runs on the build we vouched for.
+# 1. Run ensure-node.sh, which makes sure ./node/bin/node works: a no-op if it
+#    already does, else it links a pre-installed Node or downloads a verified
+#    build (see the long explanation in that script).
+# 2. Start the server using *that* Node, so the code always runs on the build
+#    ensure-node.sh vouched for.
 #
 # Any arguments you pass to start.sh are forwarded straight to server.js, e.g.
 #   ./start.sh tailscale
@@ -24,12 +25,9 @@ NODE_BIN="${SCRIPT_DIR}/node/bin/node"
 
 # --- Make sure we have Node ---------------------------------------------------
 
-# If the unpacked Node binary isn't there yet, fetch it. get-node.sh does the
-# download + checksum verification and unpacks into ./node.
-if [ ! -x "$NODE_BIN" ]; then
-  echo "No local Node.js found — fetching one with get-node.sh..."
-  "${SCRIPT_DIR}/get-node.sh"
-fi
+# ensure-node.sh is idempotent and silent when ./node/bin/node already works;
+# otherwise it links a pre-installed Node or downloads a verified build.
+"${SCRIPT_DIR}/ensure-node.sh"
 
 # --- Start the server ---------------------------------------------------------
 

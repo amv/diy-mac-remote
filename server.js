@@ -159,7 +159,7 @@ function loadTLS() {
     if (TLS_FORCED) {
       throw new Error(
         `--tls was requested but no TLS key at ${TLS_KEY_FILE}. Generate one with ` +
-        `./gen-cert.sh (or set TLS_CERT/TLS_KEY), then restart.`
+        `./setup-https.sh (or set TLS_CERT/TLS_KEY), then restart.`
       );
     }
     return null; // no key, no --tls -> fall back to plain HTTP
@@ -171,7 +171,7 @@ function loadTLS() {
     if (err.code !== 'ENOENT') throw err;
     throw new Error(
       `Found a TLS key at ${TLS_KEY_FILE} but no certificate at ${TLS_CERT_FILE}. ` +
-      `Run ./gen-cert.sh to (re)generate both, then restart.`
+      `Run ./setup-https.sh to (re)generate both, then restart.`
     );
   }
   return { key, cert };
@@ -600,6 +600,22 @@ function tailscaleSelf() {
   return null;
 }
 
+// Does the served certificate vouch for this host? Always true over plain HTTP
+// (there is no certificate to disagree with). Used to pick the advertised name
+// and to warn instead of printing a QR the phone would refuse. TLS.cert is the
+// full chain; X509Certificate parses its first PEM block — the leaf.
+function certCovers(host) {
+  if (!TLS) return true;
+  try {
+    const x509 = new crypto.X509Certificate(TLS.cert);
+    return /^\d+\.\d+\.\d+\.\d+$/.test(host)
+      ? Boolean(x509.checkIP(host))
+      : Boolean(x509.checkHost(host));
+  } catch {
+    return true; // unparseable cert -> don't invent warnings; TLS itself still works
+  }
+}
+
 // Resolve the address to advertise into { url, kind, ips, tsIp4 }, where kind is
 // one of 'custom' | 'tailscale' | 'local' | 'ip' | 'none' (used to tailor the
 // startup banner and warnings). `ips` is the list of auto-detected LAN IPv4
@@ -620,14 +636,30 @@ function resolveBase() {
   let tsIp4 = null; // set only when advertising Tailscale: the interface to bind
   if (MODE === 'tailscale') {
     const ts = tailscaleSelf();
-    if (ts) { host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4; }
+    if (!ts) {
+      // Explicit tailscale mode is a security choice — the tailnet-only source
+      // filter comes with it. Falling back to an open LAN address would drop
+      // that filter silently, so refuse to start instead.
+      console.error('\n❌ Tailscale mode: no tailnet detected (is Tailscale running and');
+      console.error('   signed in on this Mac?). Refusing to fall back to an unfiltered');
+      console.error('   LAN address. Start Tailscale and try again — or, on a network');
+      console.error('   whose router you trust, run:  ./start.sh wifi');
+      process.exit(1);
+    }
+    host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4;
   } else if (MODE === 'wifi') {
     host = localHostname();
     if (host) kind = 'local';
   } else { // detect
     const ts = tailscaleSelf();
-    if (ts) { host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4; }
-    else { host = localHostname(); if (host) kind = 'local'; }
+    const local = localHostname();
+    // Prefer the tailnet when one is up — unless we're serving HTTPS with a
+    // certificate that vouches for the .local name but not the MagicDNS name
+    // (gen-cert.sh's default): a QR the phone refuses helps nobody, so pick
+    // the name the certificate actually covers.
+    const preferLocal = ts && local && !certCovers(ts.name) && certCovers(local);
+    if (ts && !preferLocal) { host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4; }
+    else if (local) { host = local; kind = 'local'; }
   }
 
   if (host) return { url: `${SCHEME}://${host}:${PORT}/`, kind, tsIp4 };
@@ -674,11 +706,13 @@ server.listen(PORT, bindHost, () => {
   console.log('diy-mac-remote server running.');
   if (TLS) {
     console.log(`🔒 Serving HTTPS (cert: ${TLS_CERT_FILE}).`);
-    console.log('   First time on a phone: install & trust the CA once — see');
-    console.log('   README > "Serve it over HTTPS" (option A).');
+    console.log('   First time on a phone: install & trust the CA once — the steps are');
+    console.log('   in the diy-mac-remote folder on the Desktop (or README > "Serve it');
+    console.log('   over HTTPS").');
   } else {
-    console.log('   Serving plain HTTP. To serve HTTPS, run ./setup-https.sh and pick');
-    console.log('   self-signed or Tailscale. See README > "Serve it over HTTPS".');
+    console.log('   Serving plain HTTP. To serve HTTPS, double-click');
+    console.log('   install-self-signed.command (or run ./setup-https.sh). See');
+    console.log('   README > "Serve it over HTTPS".');
   }
   if (process.platform !== 'darwin') {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
@@ -714,9 +748,23 @@ server.listen(PORT, bindHost, () => {
   }
   console.log('  ' + base);
 
-  // A .local address trusts the local network. Warn — an active attacker on a
-  // compromised router can rewrite the page itself (see README › Security).
-  if (kind === 'local') {
+  // With HTTPS on, a URL the certificate doesn't vouch for is a dead end — the
+  // phone will refuse the page. Say so up front, with the fix, instead of
+  // leaving the user to puzzle over a Safari error.
+  let advertHost = null;
+  try { advertHost = new URL(base).hostname; } catch {}
+  if (advertHost && !certCovers(advertHost)) {
+    console.log(`\n⚠️  The certificate does not cover ${advertHost} — the phone will`);
+    console.log('   refuse this URL. Either re-run the setup naming it explicitly:');
+    console.log(`     ./setup-https.sh ${advertHost}`);
+    console.log('   (then restart the server), or advertise the covered .local name');
+    console.log('   instead:  ./start.sh wifi');
+  }
+
+  // Over plain HTTP a .local address trusts the local network. Warn — an active
+  // attacker on a compromised router can rewrite the page itself (see README ›
+  // Security). With HTTPS + an installed CA that gap is closed, so no warning.
+  if (kind === 'local' && !TLS) {
     console.log(
       '\n⚠️  This is a LAN address — only safe on a network whose router you trust.\n' +
       '   On an untrusted network it is suggested to use Tailscale.'
@@ -734,7 +782,7 @@ server.listen(PORT, bindHost, () => {
       console.log('   your Wi-Fi address; if not, set it manually as the first parameter:');
       console.log(`     node server.js http://<ip>:${PORT}/`);
     }
-    console.log('   A LAN address is only safe on a network whose router you trust.');
+    if (!TLS) console.log('   A LAN address is only safe on a network whose router you trust.');
   } else if (kind === 'tailscale') {
     if (ENFORCE_TAILNET) {
       console.log('\n🔒 Accepting requests from the tailnet only' +
@@ -758,6 +806,9 @@ server.listen(PORT, bindHost, () => {
     console.log('\nScan to pair this device (the pairing key is in the # fragment):');
     printQR(authUrl);
     console.log(authUrl + '\n');
+    console.log('After pairing: add the page to your Home Screen (Share → Add to Home');
+    console.log('Screen) so the credentials are stored, then restart this server —');
+    console.log('the pairing key above should not stay on screen.\n');
   } else {
     console.log('\nAlready-paired devices: just open the app (they kept their credentials).');
     console.log('To pair a NEW device (or recover a lost pairing), restart with:');
