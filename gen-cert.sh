@@ -209,8 +209,15 @@ for arg in "$@"; do add_auto "$arg"; done
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/diy-mac-remote-cert.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
+# LibreSSL's `openssl req` refuses any -config file lacking a distinguished_name
+# entry, even when the subject comes from -subj — so both config files carry a
+# stub [req] section pointing at an empty DN section.
 ALT="$TMP/alt.cnf"
 {
+  echo "[req]"
+  echo "distinguished_name = req_dn"
+  echo "[req_dn]"
+  echo
   echo "[v3_leaf]"
   echo "basicConstraints = CA:FALSE"
   echo "keyUsage = critical, digitalSignature, keyEncipherment"
@@ -242,6 +249,10 @@ constraint_subnets() {
 
 CACNF="$TMP/ca.cnf"
 {
+  echo "[req]"
+  echo "distinguished_name = req_dn"
+  echo "[req_dn]"
+  echo
   echo "[v3_ca]"
   echo "basicConstraints = critical, CA:TRUE"
   echo "keyUsage = critical, keyCertSign, cRLSign"
@@ -280,7 +291,7 @@ PRIMARY="$(printf '%s\n' $DNS_NAMES | grep -v '^localhost$' | head -n1 || true)"
 [ -n "$PRIMARY" ] || PRIMARY="localhost"
 
 CSR="$TMP/leaf.csr"
-openssl req -new -key "$TMP/leaf.key" -subj "/CN=$PRIMARY" -out "$CSR"
+openssl req -new -key "$TMP/leaf.key" -subj "/CN=$PRIMARY" -config "$ALT" -out "$CSR"
 openssl x509 -req -in "$CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial \
   -days "$LEAF_DAYS" -sha256 -extfile "$ALT" -extensions v3_leaf \
   -out "$TMP/leaf.pem"
