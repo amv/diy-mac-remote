@@ -1,22 +1,26 @@
 #!/bin/sh
 #
-# install-tailscale.command — double-clickable setup for running diy-mac-remote
-# over Tailscale, for macOS Finder.
+# install-tailscale.sh — set up diy-mac-remote for Tailscale. Run it from
+# Terminal:
+#
+#   ./install-tailscale.sh
 #
 # The Tailscale path needs no certificate and nothing installed on the phone:
 # the server's own crypto protects every keystroke, and the tailnet-only source
 # filter keeps other networks out (see README > Run the server). So "install"
 # here is just: make sure there's a Node.js to run on, and put a
-# double-clickable start.command into the `diy-mac-remote` folder on the
-# Desktop. The Terminal window stays open afterwards so you can read the steps
-# below.
+# double-clickable start.command (Tailscale mode baked in) into the
+# `diy-mac-remote` folder on the Desktop.
 #
-# Terminal starts .command files with your home directory as the working
-# directory, not the folder the file lives in — so resolve our own location
-# first, same trick as start.sh.
+# Why isn't this itself a double-clickable .command file? macOS quarantines
+# downloaded files and refuses to run a downloaded .command from Finder. Files
+# *created on this Mac* are not quarantined — so you run this script from
+# Terminal once, and the start.command it generates on the Desktop is safely
+# double-clickable from then on.
 
 set -eu
 
+# Resolve our own location, so the script works from any current directory.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Idempotent and silent when ./node/bin/node already works; otherwise it links

@@ -149,11 +149,11 @@ strict about it: if no tailnet is up when the server starts, it **refuses to
 start** rather than silently falling back to an unfiltered LAN address (the
 default `detect` mode does fall back — that's the difference between them).
 
-Prefer double-clicking? [`install-tailscale.command`](install-tailscale.command)
-sets this path up: it makes sure there's a Node.js to run on and puts a
-`start.command` into the `diy-mac-remote` folder on the Desktop — no certificate
-involved. The generated `start.command` has `tailscale` mode baked in, so a
-double-click can never accidentally start the server in a less strict mode.
+[`install-tailscale.sh`](install-tailscale.sh) sets this path up: it makes sure
+there's a Node.js to run on and puts a double-clickable `start.command` into
+the `diy-mac-remote` folder on the Desktop — no certificate involved. The
+generated `start.command` has `tailscale` mode baked in, so a double-click can
+never accidentally start the server in a less strict mode.
 
 The QR (and printed link) point at that URL with a single **pairing key** appended
 as the `#fragment` (`#<key>`). The phone derives *two* credentials from it — the
@@ -162,8 +162,10 @@ secret that keys the crypto and a token the server only ever stores hashed (see
 server can no longer show it (it kept only the derived secret and the token's hash
 — that's the point), so already-paired devices just reopen the app; to pair a
 **new** device, or to recover if a phone loses its pairing, run
-`node server.js --reset-token` to mint a fresh key and QR. That rotates the
-pairing, so every previously paired device must re-pair.
+`node server.js --reset-token` to mint a fresh key and QR (or double-click
+`reset-app-secrets.command` in the Desktop `diy-mac-remote` folder and restart
+the server — same effect). That rotates the pairing, so every previously
+paired device must re-pair.
 
 ### Deliver the app to your Home Screen (full-screen)
 
@@ -212,15 +214,20 @@ means trusting it for the *whole web*; this one can never speak for
 
 ### 1. Run the setup (on the Mac)
 
-Double-click [`install-self-signed.command`](install-self-signed.command) in
-Finder (it opens a Terminal window and keeps it open so you can read the
-steps; it also sets up Node.js in the background — see
-[Get a Node.js](#get-a-nodejs)), or run the same thing yourself:
+In Terminal, run [`install-self-signed.sh`](install-self-signed.sh) — it also
+sets up Node.js in the background (see [Get a Node.js](#get-a-nodejs)) — or do
+the certificate part on its own:
 
 ```sh
-./setup-https.sh                       # certificate for this Mac's .local name
+./install-self-signed.sh               # the whole setup, Node.js included
+./setup-https.sh                       # just the certificate + Desktop folder
 ./setup-https.sh mymac.local 10.0.0.9  # ...plus any extra name/IP the phone will use
 ```
+
+(The installers are plain shell scripts on purpose: macOS refuses to run a
+*downloaded* `.command` file from Finder. The `start.command` this run
+generates on your Desktop is created locally on your Mac, so double-clicking
+that is fine.)
 
 By default the certificate covers **only the Mac's `.local` address** — no
 localhost, no LAN IPs, no Tailscale names — because that's the one stable
@@ -246,7 +253,11 @@ The folder holds everything the human side of the setup needs:
 - `HOWTO-AIRDROP-CERT-TO-PHONE.html` — step-by-step install instructions,
   listing the exact names the current certificate is valid for;
 - `start.command` — double-click to start the server (it points at `start.sh`
-  wherever this repo lives).
+  wherever this repo lives);
+- `reset-app-secrets.command` / `reset-certificate.command` — double-click to
+  reset the pairing or to mint a fresh CA + certificate. Both are thin entries
+  into [`reset.sh`](reset.sh): they ask for confirmation first, and the reset
+  takes effect when the server is next started.
 
 ### 2. Install and trust the CA on the iPhone (once)
 
@@ -271,7 +282,7 @@ exactly this:
 
 ### 3. Start the server
 
-Double-click `start.command` (in the Desktop folder or in the repo), or run
+Double-click `start.command` in the Desktop `diy-mac-remote` folder, or run
 `./start.sh`. Nothing new to type — the server serves HTTPS automatically as
 soon as the certificate files exist, and the printed QR/link switches to
 `https://`:
@@ -288,7 +299,7 @@ falling back), use `--tls`.
 ### Notes and caveats
 
 - **Re-running is always safe.** `./setup-https.sh` (or
-  `install-self-signed.command`) mints a fresh server certificate and
+  `./install-self-signed.sh`) mints a fresh server certificate and
   refreshes the Desktop folder, but reuses
   the CA — so the phone keeps trusting the new certificate with **no
   reinstall**. Re-run it after renaming the Mac, or to add an extra name.
@@ -533,21 +544,25 @@ HTTPS — a self-signed cert you install on your phone once — see
 - `setup-https.sh` — one-command HTTPS setup: generates the certificate
   (`gen-cert.sh`) and refreshes the Desktop folder (`ensure-desktop-folder.sh`);
   see [Serve it over HTTPS](#serve-it-over-https).
-- `install-self-signed.command` — double-clickable wrapper around
-  `setup-https.sh`: opens a Terminal window, runs the setup (with
-  `ensure-node.sh` in the background), and stays open so you can read the
-  steps.
-- `install-tailscale.command` — double-clickable setup for the Tailscale path:
-  runs `ensure-node.sh` and drops just a `start.command` (with `tailscale` mode
+- `install-self-signed.sh` — one-command install for the self-signed HTTPS
+  path: runs `setup-https.sh` with `ensure-node.sh` in the background.
+- `install-tailscale.sh` — installer for the Tailscale path: runs
+  `ensure-node.sh` and drops just a `start.command` (with `tailscale` mode
   baked in) into the Desktop folder — no certificate, nothing to install on the
   phone.
-- `start.command` — double-clickable wrapper around `start.sh`.
 - `gen-cert.sh` — the certificate workhorse: makes a self-signed TLS certificate
   with `openssl` (already on macOS) for this Mac's `.local` name (plus any
   names/IPs you pass).
 - `ensure-desktop-folder.sh` — makes sure the `diy-mac-remote` folder on the
   Desktop is up to date: the CA ready to AirDrop, an HTML how-to matching the
-  current certificate, and a `start.command` pointing at this repo.
+  current certificate, and double-clickable `start.command` /
+  `reset-app-secrets.command` / `reset-certificate.command` entries pointing
+  at this repo.
+- `reset.sh` — the reset logic behind those entries: `./reset.sh app-secrets`
+  forgets the pairing (fresh QR on next start, all devices re-pair);
+  `./reset.sh certificate` mints a fresh CA + certificate (install the new CA
+  on the phone once). Both confirm before resetting; a running server picks
+  the reset up on its next start.
 - `server.js` — HTTP/HTTPS server, routing, auth/crypto, static files.
 - `executor.js` — turns key actions into AppleScript and runs `osascript`.
 - `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts

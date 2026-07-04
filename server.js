@@ -208,7 +208,6 @@ let SECRET, TOKEN_HASH, MASTER = null;
     ({ master: MASTER, secret: SECRET, tokenHash: TOKEN_HASH } = mint());
   }
 }
-const MINTED = MASTER !== null;
 
 // Keep the credential directory out of Time Machine backups. Everything in it
 // is key material (secret, token.hash, key.pem, ca-key.pem), and owner-only
@@ -706,113 +705,105 @@ server.listen(PORT, bindHost, () => {
   console.log('diy-mac-remote server running.');
   if (TLS) {
     console.log(`🔒 Serving HTTPS (cert: ${TLS_CERT_FILE}).`);
-    console.log('   First time on a phone: install & trust the CA once — the steps are');
-    console.log('   in the diy-mac-remote folder on the Desktop (or README > "Serve it');
-    console.log('   over HTTPS").');
   } else {
-    console.log('   Serving plain HTTP. To serve HTTPS, double-click');
-    console.log('   install-self-signed.command (or run ./setup-https.sh). See');
-    console.log('   README > "Serve it over HTTPS".');
+    console.log('   Serving plain HTTP. To serve HTTPS, run ./install-self-signed.sh');
+    console.log('   (or ./setup-https.sh). See README > "Serve it over HTTPS".');
   }
   if (process.platform !== 'darwin') {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
   }
-  console.log(
-    MINTED
-      ? `\nMinted a new pairing in ${SECRET_DIR}` +
-        `\n  (the derived secret is stored; of the token, only its hash — pair via the QR below)`
-      : `\nLoaded secret + auth-token hash from ${SECRET_DIR}`
-  );
 
   const { url: base, kind, ips } = advertised;
 
-  // No address at all: the server is still listening on every interface, but
-  // there's nothing to advertise — so no QR. Tell the user how to recover.
-  if (kind === 'none') {
-    console.log('\n⚠️  Could not detect this machine\'s address.');
-    console.log('   The server is listening on all interfaces, but there is no');
-    console.log('   address to show. If you just changed networks, press Ctrl-C to');
-    console.log('   stop the server and start it again to retry. You can also set');
-    console.log(`   the address manually: node server.js http://<your-ip>:${PORT}/`);
-    return;
-  }
+  // --- Notes about how the server behaves — relevant with or without a QR -----
 
-  if (kind === 'custom') {
-    console.log(`\nUsing custom URL (server still listens on port ${PORT}):`);
-  } else if (kind === 'tailscale') {
-    console.log('\nOpen on your phone (same Tailscale tailnet):');
-  } else if (kind === 'local') {
-    console.log('\nOpen on your phone (same Wi-Fi):');
-  } else {
-    console.log('\nOpen on your phone (same LAN):');
-  }
-  console.log('  ' + base);
-
-  // With HTTPS on, a URL the certificate doesn't vouch for is a dead end — the
-  // phone will refuse the page. Say so up front, with the fix, instead of
-  // leaving the user to puzzle over a Safari error.
-  let advertHost = null;
-  try { advertHost = new URL(base).hostname; } catch {}
-  if (advertHost && !certCovers(advertHost)) {
-    console.log(`\n⚠️  The certificate does not cover ${advertHost} — the phone will`);
-    console.log('   refuse this URL. Either re-run the setup naming it explicitly:');
-    console.log(`     ./setup-https.sh ${advertHost}`);
-    console.log('   (then restart the server), or advertise the covered .local name');
-    console.log('   instead:  ./start.sh wifi');
-  }
-
-  // Over plain HTTP a .local address trusts the local network. Warn — an active
-  // attacker on a compromised router can rewrite the page itself (see README ›
-  // Security). With HTTPS + an installed CA that gap is closed, so no warning.
-  if (kind === 'local' && !TLS) {
-    console.log(
-      '\n⚠️  This is a LAN address — only safe on a network whose router you trust.\n' +
-      '   On an untrusted network it is suggested to use Tailscale.'
-    );
-  } else if (kind === 'ip') {
-    // Auto-detected raw IP — it might not be the Wi-Fi one. Help the user pick.
-    if (ips.length > 1) {
-      console.log('\n⚠️  No hostname found — auto-detected several LAN IPs. Any of these');
-      console.log('   might be the right one (the QR uses the first):');
-      for (const ip of ips) console.log(`     ${SCHEME}://${ip}:${PORT}/`);
-      console.log('   If the QR doesn\'t work, set the right one manually as the first');
-      console.log(`   parameter: node server.js http://<ip>:${PORT}/`);
-    } else {
-      console.log('\n⚠️  No hostname found — this IP was auto-detected. Check that it is');
-      console.log('   your Wi-Fi address; if not, set it manually as the first parameter:');
-      console.log(`     node server.js http://<ip>:${PORT}/`);
-    }
-    if (!TLS) console.log('   A LAN address is only safe on a network whose router you trust.');
-  } else if (kind === 'tailscale') {
+  if (kind === 'tailscale') {
     if (ENFORCE_TAILNET) {
-      console.log('\n🔒 Accepting requests from the tailnet only' +
+      console.log('🔒 Accepting requests from the tailnet only' +
         (advertised.tsIp4 ? ` (this Mac is ${advertised.tsIp4})` : '') + '.');
-      console.log('   The port is open on all interfaces, but any non-Tailscale source —');
-      console.log('   e.g. a co-present untrusted LAN — is refused with a 403 before it');
-      console.log('   reaches the app.');
     } else {
-      console.log(`\n⚠️  HOST is set (${bindHost}); the tailnet-only source filter is OFF —`);
+      console.log(`⚠️  HOST is set (${bindHost}); the tailnet-only source filter is OFF —`);
       console.log('   the server trusts whatever can reach that bind address.');
     }
   }
 
-  // Pairing hands the phone the MASTER in the #fragment (never sent to the
-  // server); the page derives the secret + token from it. We can only show the
-  // master right after minting it (first run or --reset-token) — on a normal
-  // restart it's gone by design (disk holds only the derived secret + token hash),
-  // so paired devices just reopen the app and new ones re-pair.
-  if (MASTER) {
-    const authUrl = withFragment(base, MASTER);
-    console.log('\nScan to pair this device (the pairing key is in the # fragment):');
-    printQR(authUrl);
-    console.log(authUrl + '\n');
-    console.log('After pairing: add the page to your Home Screen (Share → Add to Home');
-    console.log('Screen) so the credentials are stored, then restart this server —');
-    console.log('the pairing key above should not stay on screen.\n');
-  } else {
-    console.log('\nAlready-paired devices: just open the app (they kept their credentials).');
-    console.log('To pair a NEW device (or recover a lost pairing), restart with:');
-    console.log('  node server.js --reset-token');
-    console.log('  ⚠️  This mints a fresh pairing key — every paired device must re-pair.\n');
+  // Over plain HTTP a LAN address trusts the local network — an active attacker
+  // on a compromised router can rewrite the page itself (see README › Security).
+  // With HTTPS + an installed CA that gap is closed, so no warning then.
+  if ((kind === 'local' || kind === 'ip') && !TLS) {
+    console.log('⚠️  Serving on a LAN address — only safe on a network whose router you');
+    console.log('   trust. On an untrusted network it is suggested to use Tailscale.');
   }
+
+  // With HTTPS on, an address the certificate doesn't vouch for is a dead end —
+  // the phone will refuse the page. Say so up front, with the fix.
+  let advertHost = null;
+  try { advertHost = new URL(base || '').hostname; } catch {}
+  if (advertHost && !certCovers(advertHost)) {
+    console.log(`⚠️  The certificate does not cover ${advertHost} — the phone will refuse`);
+    console.log(`   this address. Re-run the setup naming it (./setup-https.sh ${advertHost}),`);
+    console.log('   or advertise the covered .local name instead: ./start.sh wifi');
+  }
+
+  // --- Pairing -----------------------------------------------------------------
+  // The QR hands the phone the MASTER in the #fragment (never sent to the
+  // server); the page derives the secret + token from it. It can only be shown
+  // right after minting it (first run, or after an app-secrets reset) — on a
+  // normal restart it's gone by design (disk holds only the derived secret and
+  // the token's hash). So on a restart there is nothing to hand out, and no
+  // point advertising the URL either: a paired phone carries it inside its Home
+  // Screen app, and an unpaired one needs a reset, not a link.
+
+  if (!MASTER) {
+    console.log('\nOn the iPhone, open the Home Screen app you saved for this server' +
+      (base ? `\n(${base}) — it kept its pairing.` : ' — it kept its pairing.'));
+    console.log('\nNo Home Screen app, or the pairing was lost? Reset the app secrets and');
+    console.log('start again — a fresh pairing QR prints then (every device re-pairs):');
+    console.log('  reset-app-secrets.command in the Desktop diy-mac-remote folder,');
+    console.log('  or: node server.js --reset-token');
+    return;
+  }
+
+  // A fresh pairing was minted — this is the one time it can be shown.
+
+  if (kind === 'none') {
+    // Minted, but no address to build the QR from. The key is already gone
+    // (never written to disk), so after fixing the network a reset is the way
+    // to get a fresh QR.
+    console.log('\n⚠️  A new pairing was minted, but no address for this Mac could be');
+    console.log('   detected, so the pairing QR cannot be shown. Connect the Mac to the');
+    console.log(`   network your phone uses (or pass a URL: node server.js http://<ip>:${PORT}/),`);
+    console.log('   then reset the app secrets and start again for a fresh QR:');
+    console.log('   reset-app-secrets.command (or: node server.js --reset-token)');
+    return;
+  }
+
+  // Raw auto-detected IP: it might be the wrong interface — help the user pick.
+  if (kind === 'ip') {
+    if (ips.length > 1) {
+      console.log(`\n⚠️  No hostname found — several LAN IPs detected; the QR uses ${ips[0]}.`);
+      console.log('   If it doesn\'t work, pass the right one as the first parameter:');
+      console.log(`     node server.js http://<ip>:${PORT}/`);
+    } else {
+      console.log('\n⚠️  No hostname found — this IP was auto-detected. If the QR doesn\'t');
+      console.log(`   work, pass the right one: node server.js http://<ip>:${PORT}/`);
+    }
+  }
+
+  if (TLS) {
+    console.log('\nFirst time on this phone: install & trust the CA once — the file and');
+    console.log('the steps are in the diy-mac-remote folder on the Desktop.');
+  }
+
+  const where =
+    kind === 'tailscale' ? 'same Tailscale tailnet' :
+    kind === 'local' ? 'same Wi-Fi' :
+    kind === 'custom' ? 'wherever this URL reaches the Mac' : 'same LAN';
+  const authUrl = withFragment(base, MASTER);
+  console.log(`\nScan to pair — in Safari on the iPhone (${where}):`);
+  printQR(authUrl);
+  console.log(authUrl + '\n');
+  console.log('After pairing: add the page to your Home Screen (Share → Add to Home');
+  console.log('Screen) so the credentials are stored, then restart this server —');
+  console.log('the pairing key above should not stay on screen.\n');
 });

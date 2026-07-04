@@ -71,9 +71,11 @@ function startServer({ home, port, args = [], url, env = {} }) {
     const timer = setTimeout(() => reject(new Error('server start timeout\n' + out)), 5000);
     const onData = (c) => {
       out += c;
-      if (/server running/.test(out) && /(Minted|Loaded)/.test(out)) {
+      // "server running" is printed from inside the listen() callback, so the
+      // socket is already bound; the tiny delay lets the rest of the banner land.
+      if (/server running/.test(out)) {
         clearTimeout(timer);
-        setTimeout(() => resolve({ child, out: () => out }), 150); // let listen() bind
+        setTimeout(() => resolve({ child, out: () => out }), 150);
       }
     };
     child.stdout.on('data', onData);
