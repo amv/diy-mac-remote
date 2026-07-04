@@ -13,7 +13,7 @@ short as possible by helping you do most of it **yourself**, in a way that is
 
 There is **no App Store app** to install. There is **no compiled installer**
 for the part running on your mac. There never will be. Instead you get the
-source for both halves and *you* decide how to deliver them onto your own mac
+source for both halves and _you_ decide how to deliver them onto your own mac
 and phone by following our guides.
 
 `diy-mac-remote` is a kit, not a product. Nothing is signed by us, hosted by
@@ -51,7 +51,7 @@ For each half there are several ways to do the delivery, with different
 trade-offs in trust, convenience, and reach. We'll provide a menu of those
 options and a guide for each. **Right now one path is written up below** — the
 fast, local one, but one that requires a lot of trust from your network! More guides are coming; the philosophy is that you pick the
-delivery that fits *your* threat model and *your* network, and we just hand you
+delivery that fits _your_ threat model and _your_ network, and we just hand you
 the recipes.
 
 ## Requirements
@@ -62,12 +62,17 @@ the recipes.
   Node you already have, or fetches an official build and verifies it against a
   checksum pinned in this repo (see [Get a Node.js](#get-a-nodejs)).
 - This repository.
-- **Accessibility permission:** the first time it sends a key, macOS will ask to allow your Terminal *System Settings → Privacy & Security → Accessibility*. Grant it.
+- **Accessibility permission:** the first time it sends a key, macOS will ask to allow your Terminal _System Settings → Privacy & Security → Accessibility_. Grant it.
+- A secured network connection between your devices:
 
-> ⚠️ **DO NOT USE** if you do not trust your LAN network routers! The easiest
-> way to increase trust is to install [Tailscale](https://tailscale.com) on
-> your Mac and iPhone.
-> See [Security](#security) or [How it works](#how-it-works) for more info.
+> ⚠️ **Secure your network:** Run this either with a self-signed HTTPS certificate
+> installed manyally on your iPhone manually (see [Serve it over HTTPS](#serve-it-over-https)), or over a trusted VPN like
+> [Tailscale](https://tailscale.com) on both your Mac and iPhone.
+> You CAN also run the server in plain HTTP mode, and the server should do a
+> decent job at securing the actual control traffic, but this does open you up
+> to an active MITM attack if your router is compromised;
+> and since almost nobody can actually verify their router is not compromised,
+> you should never do this. See [Security](#security) for threat model details.
 
 ## Delivery guide: run it locally (the default DIY path)
 
@@ -113,7 +118,7 @@ with `--download`, if you'd rather not trust the copy on your machine — it
 fetches an official build and checks it against a SHA-256 checksum **pinned in
 this repository**, refusing to unpack anything on a mismatch. That's stronger
 than trusting the checksum Node.js publishes alongside the download: if an
-attacker controlled nodejs.org they could serve a malicious tarball *and* a
+attacker controlled nodejs.org they could serve a malicious tarball _and_ a
 matching checksum. By pinning the hash in this repo, fooling you requires
 compromising **both** nodejs.org **and** this repository — the same "split your
 trust" idea the rest of `diy-mac-remote` is built on.
@@ -139,7 +144,7 @@ advertises a Tailscale address — either `tailscale` mode, or the default `dete
 mode when a tailnet is up — it accepts requests **only** from tailnet source
 addresses (`100.64.0.0/10` or Tailscale's IPv6 range). The port still listens on
 all interfaces, but a request from anywhere else — e.g. a co-present untrusted
-Wi-Fi — is refused with a `403` *before* it reaches any routing, crypto, or input
+Wi-Fi — is refused with a `403` _before_ it reaches any routing, crypto, or input
 handling, so an on-path attacker on that LAN can't drive your Mac or get the page
 to rewrite. (Filtering the source rather than binding one interface avoids a
 startup race with Tailscale and survives your tailnet IP changing. The
@@ -156,7 +161,7 @@ generated `start.command` has `tailscale` mode baked in, so a double-click can
 never accidentally start the server in a less strict mode.
 
 The QR (and printed link) point at that URL with a single **pairing key** appended
-as the `#fragment` (`#<key>`). The phone derives *two* credentials from it — the
+as the `#fragment` (`#<key>`). The phone derives _two_ credentials from it — the
 secret that keys the crypto and a token the server only ever stores hashed (see
 [Security](#security)). The key is minted on first run. On a normal restart the
 server can no longer show it (it kept only the derived secret and the token's hash
@@ -179,6 +184,7 @@ hand-installed "app", no store required:
 3. Launch it from the new "Mac Remote" icon. It opens full-screen.
 
 Notes:
+
 - Keep the Mac and phone on the same Wi-Fi or Tailscale VPN, and keep `server.js`
   running in the Terminal.
 
@@ -190,9 +196,9 @@ Notes:
 ## Serve it over HTTPS
 
 By default `diy-mac-remote` runs over plain HTTP, and that is deliberately safe
-against a *passive* eavesdropper: every keystroke is already encrypted and
+against a _passive_ eavesdropper: every keystroke is already encrypted and
 authenticated (ChaCha20 + HMAC) before it leaves the phone. What plain HTTP does
-**not** protect against is an *active* man-in-the-middle on a router you don't
+**not** protect against is an _active_ man-in-the-middle on a router you don't
 control — someone positioned to rewrite the web page itself before your phone
 ever loads it (see [Security](#security)). Serving the page over HTTPS closes
 that last gap: the phone refuses any page that isn't served under a certificate
@@ -209,7 +215,7 @@ phone trusts the server.
 The CA is **name-constrained**: baked into the certificate you install is the
 list of names it may ever vouch for — by default exactly one, this Mac's
 `.local` name — and iOS enforces that list. Installing a homemade CA normally
-means trusting it for the *whole web*; this one can never speak for
+means trusting it for the _whole web_; this one can never speak for
 `gmail.com`, only for your Mac. (See "What you're trusting" below.)
 
 ### 1. Run the setup (on the Mac)
@@ -225,7 +231,7 @@ the certificate part on its own:
 ```
 
 (The installers are plain shell scripts on purpose: macOS refuses to run a
-*downloaded* `.command` file from Finder. The `start.command` this run
+_downloaded_ `.command` file from Finder. The `start.command` this run
 generates on your Desktop is created locally on your Mac, so double-clicking
 that is fine.)
 
@@ -233,7 +239,7 @@ By default the certificate covers **only the Mac's `.local` address** — no
 localhost, no LAN IPs, no Tailscale names — because that's the one stable
 address your phone uses on the Wi-Fi, and a narrow certificate keeps the CA's
 reach narrow too. A certificate is only valid for the names baked into it, so
-if your phone will reach the Mac by some *other* address, pass it as an
+if your phone will reach the Mac by some _other_ address, pass it as an
 argument (this is [`gen-cert.sh`](gen-cert.sh) doing the work; arguments are
 forwarded to it).
 
@@ -262,7 +268,7 @@ The folder holds everything the human side of the setup needs:
 ### 2. Install and trust the CA on the iPhone (once)
 
 You need to get the CA onto the phone and then flip **two** switches —
-installing a certificate and *trusting* it are separate steps on iOS. The
+installing a certificate and _trusting_ it are separate steps on iOS. The
 `HOWTO-AIRDROP-CERT-TO-PHONE.html` in the Desktop folder walks you through
 exactly this:
 
@@ -293,7 +299,7 @@ soon as the certificate files exist, and the printed QR/link switches to
 
 Scan the QR in **Safari** — no warning, a padlock — pair, and Add to Home
 Screen. To temporarily go back to plain HTTP, start with `--no-tls`. To
-*require* HTTPS (fail loudly if the cert is missing rather than silently
+_require_ HTTPS (fail loudly if the cert is missing rather than silently
 falling back), use `--tls`.
 
 ### Notes and caveats
@@ -305,7 +311,7 @@ falling back), use `--tls`.
   reinstall**. Re-run it after renaming the Mac, or to add an extra name.
 - **The certificate names only the `.local` address**, so reach the Mac by that
   name. IP churn doesn't matter (there are no IPs in the certificate), and the
-  `.local` name is stable. If you *must* use another address — a raw IP, a
+  `.local` name is stable. If you _must_ use another address — a raw IP, a
   Tailscale MagicDNS name — pass it to `./setup-https.sh` explicitly; the
   server warns at startup if it's about to advertise an address the certificate
   doesn't cover. Note that a genuinely new name (a renamed Mac) falls outside
@@ -321,11 +327,11 @@ falling back), use `--tls`.
   General → VPN & Device Management**, or turn its switch back off under
   **Certificate Trust Settings**.
 - **What you're trusting:** the CA private key never leaves your Mac and is
-  owner-only. Anyone who both steals `ca-key.pem` *and* can position themselves as
+  owner-only. Anyone who both steals `ca-key.pem` _and_ can position themselves as
   a man-in-the-middle on your network could forge a page your phone accepts — so
   treat `ca-key.pem` like the pairing secret. For the home-LAN threat model this
   is exactly the transport trust that plain HTTP was missing. Thanks to the name
-  constraints, that is also the *worst* case: a stolen CA key can impersonate
+  constraints, that is also the _worst_ case: a stolen CA key can impersonate
   this Mac's addresses to your phone, never the rest of the web — so trusting
   this CA does not put your general browsing in one file's hands.
 - This does not replace any of the app-layer crypto; it's defence-in-depth on top
@@ -401,7 +407,7 @@ trackpad. (See `mouse.js`.)
   an envelope `{ iv, ct, mac }` (see below).
 
 There is one action endpoint; the operation (keypress vs. mouse) lives in the
-*encrypted* payload, so the URL never reveals what you sent.
+_encrypted_ payload, so the URL never reveals what you sent.
 
 ### The `/msg` envelope
 
@@ -456,7 +462,7 @@ attacker can start operating your keyboard and mouse. You do not want that.
 2. **Confidentiality.** Every action is encrypted with **ChaCha20** before
    sending. A fresh random nonce per message means identical keystrokes never
    produce identical ciphertext, so an eavesdropper can't correlate or count
-   repeats. The auth nonce + counter are *inside* the ciphertext too.
+   repeats. The auth nonce + counter are _inside_ the ciphertext too.
    - **Length hiding:** plaintext is padded with spaces to a multiple of 256
      bytes before encryption, so a single letter, a modifier combo, and a mouse
      move all look the same size on the wire (a stream cipher otherwise leaks length).
@@ -465,7 +471,7 @@ attacker can start operating your keyboard and mouse. You do not want that.
      inter-keystroke timing. (Full timing privacy would need constant-rate cover
      traffic; this is a deliberate light touch.)
 3. **Authentication.** **Encrypt-then-MAC** with HMAC-SHA256 over the ciphertext;
-   the server verifies the MAC *before* decrypting. The secret itself is never
+   the server verifies the MAC _before_ decrypting. The secret itself is never
    transmitted.
 4. **Replay protection.** The server tracks the highest counter seen per nonce
    and rejects anything not strictly greater. Nonces are random 256-bit values,
@@ -495,7 +501,7 @@ attacker can start operating your keyboard and mouse. You do not want that.
    - **What this covers:** offline theft of the disk or a backup — someone who
      ends up with your files but was never on your network still can't drive the
      Mac.
-   - **What it does *not* cover:** an attacker who **also captured your live
+   - **What it does _not_ cover:** an attacker who **also captured your live
      traffic** (the secret decrypts the token straight off the wire), or who can
      **read process memory** (both live there while running), or who can **write**
      the hash file (they'd just overwrite it — but such an attacker could overwrite
@@ -513,7 +519,7 @@ the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
   scripts, disk clones) generally ignore the exclusion attribute — check your
   own tool, or exclude the directory there too.
 - **Tailscale keeps its own keys** (its node key) in its own app data, which
-  *is* backed up. Those are Tailscale's to manage — but unlike your CA key, a
+  _is_ backed up. Those are Tailscale's to manage — but unlike your CA key, a
   stolen node key can be revoked from the admin console.
 - **Excluded means not restored.** After restoring a Mac from backup the server
   simply mints a fresh pairing on first run (scan the new QR to re-pair), and
@@ -524,10 +530,10 @@ the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
 **Crypto in the browser:** `crypto.subtle` (Web Crypto) is only available in a
 secure context (HTTPS/localhost), which plain-HTTP LAN pages are not. So the page
 ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
-`index.html`), using native Web Crypto for hashing when it *is* available.
+`index.html`), using native Web Crypto for hashing when it _is_ available.
 
 **Remaining caveat:** by default this is application-layer crypto over plain
-HTTP, not TLS. It protects the *contents* of requests, but without a trusted
+HTTP, not TLS. It protects the _contents_ of requests, but without a trusted
 server certificate it can't stop an active man-in-the-middle who can rewrite the
 page itself. For a trusted home LAN that's fine; to close the gap, serve it over
 HTTPS — a self-signed cert you install on your phone once — see
@@ -589,10 +595,10 @@ Like the rest of the project, the suite has **no dependencies and no framework**
 just a ~20-line runner (`test/harness.js`) over `node:assert`, so it's as
 auditable as the code it checks. It covers the security-critical parts:
 
-- **`chacha20.test.js`** — checks the pure-JS cipher against Node's *native*
+- **`chacha20.test.js`** — checks the pure-JS cipher against Node's _native_
   ChaCha20 (authoritative, can't be miscopied), the RFC 8439 keystream vector, and
   the encrypt/decrypt round-trip.
-- **`parity.test.js`** — runs the page's *inlined* SHA-256, ChaCha20, and
+- **`parity.test.js`** — runs the page's _inlined_ SHA-256, ChaCha20, and
   credential derivation in a sandbox and asserts they agree byte-for-byte with the
   server, so the two copies can't silently drift apart.
 - **`pairing.test.js`** — drives the real server over HTTP the way the phone does:
