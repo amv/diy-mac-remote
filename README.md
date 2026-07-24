@@ -1,5 +1,18 @@
 # diy-mac-remote — your iPhone as a **keyboard** and **trackpad** for your Mac, built and delivered by you.
 
+<div align="center">
+  <table>
+    <tr>
+      <td align="center"><img src="docs/image-trackpad.png" alt="The trackpad tab running on an iPhone" width="300"></td>
+      <td align="center"><img src="docs/image-keyboard.png" alt="The keyboard tab running on an iPhone" width="300"></td>
+    </tr>
+    <tr>
+      <td align="center"><b>The trackpad</b></td>
+      <td align="center"><b>The keyboard</b></td>
+    </tr>
+  </table>
+</div>
+
 When you open your machine up to be controlled remotely, you **really** want
 to know that the tools doing the controlling **can be trusted**.
 
