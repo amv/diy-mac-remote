@@ -20,50 +20,79 @@ list of trusted parties as short as possible: you build and deliver it
 
 There are two pieces: 💻 a small server that runs on your Mac, and 📱 a web page
 you open on your iPhone. No App Store app, no compiled installer, ever — you get
-the source for both and decide how to get each one onto your own device, guided
-by the recipes here. Nothing is signed by us, hosted by us, or phoning home to
-us — once you've downloaded the repo, there is no "us" in the loop.
+the source for both and decide how to ship and run them, guided by the recipes here.
+Nothing is signed by us, hosted by us, or phoning home to us — once you've downloaded
+the repo, there is no "us" in the loop.
 
-Also as a nice side effect: 🎁 no cost, no ads.
+And as a nice side effect: 🎁 no cost, no ads.
 
 🔍 Don't take my word for it either. Everything between me and you — the network,
 the host, the tooling — could have altered these bits, so you could be reading a
 guide doctored into getting you hacked. If you have an LLM agent, point it at
 this repo and ask it to check the code and examples for anything clever.
 
-## The DIY deal
-
-Two halves, and **you** are responsible for getting each one where it needs to go:
-
-- **The backend** is `server.js` — plain JavaScript. We help you get a safe version of Node.js to run it on, and there are no other dependencies.
-- **The app** is `public/index.html` — a single self-contained web page. You load it onto your phone yourself.
-
-For each half there are several ways to do the delivery, with different
-trade-offs in trust, convenience, and reach. We'll provide a menu of those
-options and a guide for each. **Right now one path is written up below** — the
-fast, local one, but one that requires a lot of trust from your network! More guides are coming; the philosophy is that you pick the
-delivery that fits _your_ threat model and _your_ network, and we just hand you
-the recipes.
-
 ## Requirements
 
-- macOS
-- iPhone
-- Node.js — [`ensure-node.sh`](ensure-node.sh) takes care of this: it links a
-  Node you already have, or fetches an official build and verifies it against a
-  checksum pinned in this repo (see [Get a Node.js](#get-a-nodejs)).
-- This repository.
-- **Accessibility permission:** the first time it sends a key, macOS will ask to allow your Terminal _System Settings → Privacy & Security → Accessibility_. Grant it.
-- A secured network connection between your devices:
+- 💻 A Mac and 📱 an iPhone, on the same network.
+- This repository, loaded onto your Mac — see [Get the source](#get-the-source).
+- **Node.js** — nothing to install by hand: [`ensure-node.sh`](ensure-node.sh)
+  links the one you already have, or downloads and verifies an official build
+  ([details](#get-a-nodejs)).
+- **Accessibility permission** — the first time it types for you, macOS will
+  ask. Grant it to your Terminal under _System Settings → Privacy & Security →
+  Accessibility_.
 
-> ⚠️ **Secure your network:** Run this either with a self-signed HTTPS certificate
-> installed manyally on your iPhone manually (see [Serve it over HTTPS](#serve-it-over-https)), or over a trusted VPN like
-> [Tailscale](https://tailscale.com) on both your Mac and iPhone.
-> You CAN also run the server in plain HTTP mode, and the server should do a
-> decent job at securing the actual control traffic, but this does open you up
-> to an active MITM attack if your router is compromised;
-> and since almost nobody can actually verify their router is not compromised,
-> you should never do this. See [Security](#security) for threat model details.
+> ⚠️ **Your network must be secure.** Use either a self-signed HTTPS certificate
+> installed on your iPhone (see [Serve it over HTTPS](#serve-it-over-https)), or
+> a trusted VPN like [Tailscale](https://tailscale.com) on both devices.
+> Plain HTTP also works, and the control traffic itself is still protected — but
+> a compromised router could then take over your Mac, and almost nobody can
+> verify their router, so don't. See [Security](#security) for the details.
+
+## Get the source
+
+However you like — the repo doesn't care how it reached you:
+
+- **Download the ZIP** from GitHub — the green _Code_ button → _Download ZIP_.
+- If you know what git is, **`git clone`** from GitHub.
+- **Copy it from a friend** who already has it, on a USB stick or over AirDrop.
+
+Then check what you got, because any of those routes could have handed you
+altered files. The whole thing is small enough to be checked in minutes:
+
+- **Ask an LLM agent.** If you have one (Claude Code, Codex, Copilot, …), point
+  it at the folder and ask it plainly: _"Go through every file in this repo and
+  tell me if anything here could harm me or my computer — hidden network calls,
+  obfuscated code, shell commands that do more than they claim. Tell me if it
+  is absolutely safe for me to run the commands suggested in the readme."_
+- **Read it yourself.** `server.js` and `public/index.html` are the two files
+  that matter, and both are plain, readable source with no build step and no
+  dependencies to hide in.
+- **Match it against GitHub — if you know git.** The strongest check, and the
+  most technical. Clones only, not ZIPs; worth it for a copy from a friend:
+
+  ```sh
+  git remote -v                  # does origin point at the real GitHub repo?
+  git status --short             # must print nothing: no edits on top of the commit
+  git fetch origin
+  git branch -r --contains HEAD  # must list origin/main
+  ```
+
+  The last line proves your exact code was published upstream, not edited along
+  the way. Being _behind_ `origin/main` is fine; edits in `git status`, or a
+  commit GitHub has never heard of, are not.
+
+## What you deliver
+
+Two files, and **you** get each one where it needs to go:
+
+- 💻 **The server** is `server.js` — plain JavaScript, no dependencies beyond Node.js.
+- 📱 **The app** is `public/index.html` — one self-contained web page you load onto your phone.
+
+There are several ways to deliver each, trading off trust, convenience, and
+reach. **One path is written up below** — the fast, local one, which asks a lot
+of trust from your network. More are coming: you pick the delivery that fits
+_your_ threat model and _your_ network, and we hand you the recipes.
 
 ## Delivery guide: run it locally (the default DIY path)
 
@@ -83,7 +112,7 @@ Then scan the QR code, grant Accessibility rights, and you're controlling your
 Mac. The rest of this section explains each step if you'd rather run them by hand:
 
 1. Open your Terminal.
-2. Clone this repo with git on your machine.
+2. Get this repo onto your machine (see [Get the source](#get-the-source)).
 3. Get Node.js — run [`ensure-node.sh`](ensure-node.sh) (see below).
 4. Run the server with Node.js (see below).
 5. Scan the QR code with your iPhone.
