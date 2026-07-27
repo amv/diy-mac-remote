@@ -13,45 +13,23 @@
   </table>
 </div>
 
-When you open your machine up to be controlled remotely, you **really** want
-to know that the tools doing the controlling **can be trusted**.
+🔐 Letting something control your Mac means trusting whoever built it — and
+trusting that _they_ haven't been hacked either. So this project keeps that
+list of trusted parties as short as possible: you build and deliver it
+**yourself**, from readable source.
 
-The simplest way to raise that trust is to shrink the list of parties you have
-to rely on, because even if those parties are honest, you are also trusting
-that **they themselves are not hacked!**
+🧩 There are two pieces: a small server that runs on your Mac, and a web page you
+open on your iPhone. No App Store app, no compiled installer, ever — you get
+the source for both and decide how to get each one onto your own device, guided
+by the recipes here. Nothing is signed by us, hosted by us, or phoning home to
+us — once you've downloaded the repo, there is no "us" in the loop.
 
-That is the aim of this project: to keep the list of trusted parties list as
-short as possible by helping you do most of it **yourself**, in a way that is
-**transparent**, **verifiable**, and **easy**.
+🎁 Also as a nice side effect: no cost, no ads.
 
-There is **no App Store app** to install. There is **no compiled installer**
-for the part running on your mac. There never will be. Instead you get the
-source for both halves and _you_ decide how to deliver them onto your own mac
-and phone by following our guides.
-
-`diy-mac-remote` is a kit, not a product. Nothing is signed by us, hosted by
-us, or phoning home to us, because there is no "us" in the loop once you've
-downloaded the repo. You are in charge of everything that runs both on your
-phone and mac.
-
-And as a small bonus, there is also no cost, and no ads.
-
-```
-┌────────────┐        you wire this up yourself:       ┌────────────┐
-│  your Mac  │  ◀─ Mac software (server.js) --------   │ your iPhone│
-│ (the host) │  ----- Web app (public/index.html) ─▶   │ (the app)  │
-└────────────┘                                         └────────────┘
-```
-
-As an extra measure, if you have access to an LLM agent, you should download
-this code, and then ask the agent to verify none of the code and examples in
-this repo contain clever ways to try to hack you.
-
-It is not only you being rightfully untrusting of me who wrote this message,
-but untrusting of all of the infrastructure that was needed to send these bits
-to your computer - because a lot could have gone wrong along the way, and you
-might be reading a guide that was purposefully altered to get you to do things
-that expose your computer to be controlled by hackers.
+🔍 Don't take my word for it either. Everything between me and you — the network,
+the host, the tooling — could have altered these bits, so you could be reading a
+guide doctored into getting you hacked. If you have an LLM agent, point it at
+this repo and ask it to check the code and examples for anything clever.
 
 ## The DIY deal
 
