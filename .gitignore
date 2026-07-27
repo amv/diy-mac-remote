@@ -1,1 +1,5 @@
 .claude/
+
+# Local Node.js runtime created by ensure-node.sh — either a symlink to a
+# pre-installed Node or a downloaded one. Machine-specific, never committed.
+/node/

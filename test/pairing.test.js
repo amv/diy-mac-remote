@@ -8,7 +8,7 @@ const path = require('path');
 const { test, assert } = require('./harness');
 const {
   deriveCreds, buildEnvelope, getFreePort,
-  startServer, stopServer, httpReq, pairMaster, mkTempHome,
+  startServer, stopServer, runServer, httpReq, pairMaster, mkTempHome,
   fakeTailscaleBin, httpFrom, lanIPv4,
 } = require('./helpers');
 
@@ -124,50 +124,85 @@ test('--reset-token rotates the pairing; old creds fail, new creds pass', async 
   }
 });
 
-// ---- tailnet-only source filter (Tailscale mode) ----
-// These stand alone (own temp home + port) and stub `tailscale` on PATH so the
-// filter engages regardless of whether this machine really runs Tailscale.
+// ---- no source filtering: every source is served alike ----
+// Access is decided by the pairing crypto, never by the address a request came
+// from. Tailscale mode is the case that used to filter, so it's the one to pin.
 
-test('tailnet mode refuses a non-tailnet (LAN) source, allows loopback', async () => {
+test('a non-loopback (LAN) source is served, in tailscale mode too', async () => {
+  const lan = lanIPv4();
+  if (!lan) { console.log('       (no LAN IPv4 on this host — skipped)'); return; }
   const home = mkTempHome();
-  const bin = fakeTailscaleBin(home, '100.101.102.103'); // in 100.64.0.0/10
+  const bin = fakeTailscaleBin(home);
   const port = await getFreePort();
   const s = await startServer({ home, port, url: null, args: ['tailscale'],
     env: { PATH: `${bin}:${process.env.PATH}` } });
   try {
-    assert.match(s.out(), /tailnet only/, 'banner should announce the tailnet-only filter');
-
-    // Loopback is treated as local and passes the gate (public /nonce -> 200).
-    const loop = await httpFrom({ host: '127.0.0.1', port, path: '/nonce' });
-    assert.strictEqual(loop.status, 200, 'loopback should pass the gate: ' + loop.body);
-
-    // A LAN source is refused at the gate, before any routing/auth.
-    const lan = lanIPv4();
-    if (lan) {
-      const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
-      assert.strictEqual(r.status, 403, `LAN source should be refused, got ${r.status}`);
-      assert.match(r.body, /tailnet/, 'refusal should mention tailnet');
-    } else {
-      console.log('       (no LAN IPv4 on this host — skipped the deny-path assertion)');
-    }
+    const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
+    assert.strictEqual(r.status, 200, 'public /nonce should answer any source: ' + r.body);
   } finally {
     await stopServer(s.child);
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
-test('filter is OFF outside tailnet mode: a LAN source is served normally', async () => {
-  const lan = lanIPv4();
-  if (!lan) { console.log('       (no LAN IPv4 on this host — skipped)'); return; }
+// ---- strict when pairing, permissive when restarting ----
+// The mode picks the address baked into the QR, so a mode that can't produce one
+// must fail loudly — but only while pairing. A restart resolves no address at
+// all, so a down tailnet is no reason to refuse to run: it will likely come up.
+
+test('tailscale mode with no tailnet refuses to pair', async () => {
+  const home = mkTempHome();
+  const bin = fakeTailscaleBin(home, { running: false });
+  const port = await getFreePort();
+  try {
+    const r = await runServer({ home, port, url: null, args: ['tailscale'],
+      env: { PATH: `${bin}:${process.env.PATH}` } });
+    assert.strictEqual(r.code, 1, 'should exit non-zero, got ' + r.code);
+    assert.match(r.out, /no tailnet detected/, 'should say why: ' + r.out);
+    assert.ok(!fs.existsSync(path.join(home, '.diy-mac-remote', 'secret')),
+      'must not leave a half-minted pairing behind');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('an already-paired server starts in tailscale mode with no tailnet', async () => {
   const home = mkTempHome();
   const port = await getFreePort();
-  // wifi mode never consults Tailscale, so the filter stays off deterministically
-  // even if the host running the tests happens to have a tailnet up.
-  const s = await startServer({ home, port, url: null, args: ['wifi'] });
+  // Pair first (custom URL, no detection), then restart with the tailnet down.
+  await stopServer((await startServer({ home, port })).child);
+
+  const bin = fakeTailscaleBin(home, { running: false });
+  const s = await startServer({ home, port, url: null, args: ['tailscale'],
+    env: { PATH: `${bin}:${process.env.PATH}` } });
   try {
-    const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
-    assert.notStrictEqual(r.status, 403, 'LAN source must not be filtered outside tailnet mode');
-    assert.strictEqual(r.status, 200, 'public /nonce should answer a LAN client: ' + r.body);
+    assert.match(s.out(), /Home Screen app/, 'should point at the paired app: ' + s.out());
+    const r = await httpReq(port, 'GET', '/nonce');
+    assert.strictEqual(r.status, 200, 'server should be serving: ' + r.body);
+  } finally {
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// ---- a restart prints no address ----
+// The paired Home Screen app already holds it, and retyping a hostname is
+// exactly what pairing exists to avoid.
+
+test('a restart prints no address and no QR', async () => {
+  const home = mkTempHome();
+  const port = await getFreePort();
+  const url = `http://127.0.0.1:${port}/`;
+  const first = await startServer({ home, port, url });
+  assert.ok(pairMaster(first.out()), 'the pairing run should print a QR link');
+  await stopServer(first.child);
+
+  const s = await startServer({ home, port, url });
+  try {
+    const out = s.out();
+    assert.ok(!out.includes(url), 'restart must not print the address: ' + out);
+    assert.strictEqual(pairMaster(out), null, 'restart must not print a pairing link');
+    assert.match(out, /Home Screen app/, 'restart should point at the paired app');
   } finally {
     await stopServer(s.child);
     fs.rmSync(home, { recursive: true, force: true });

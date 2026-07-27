@@ -2,10 +2,13 @@
 #
 # install-self-signed.sh — one-command HTTPS install. Run it from Terminal:
 #
-#   ./install-self-signed.sh
+#   ./install-self-signed.sh              # certificate for this Mac's .local name
+#   ./install-self-signed.sh --tailscale  # ...plus this Mac's MagicDNS name
 #
 # It runs setup-https.sh, which generates the certificate and refreshes the
 # `diy-mac-remote` folder on the Desktop; read the remaining steps it prints.
+# Any arguments are forwarded through to gen-cert.sh, so extra names/IPs (and
+# --tailscale) can be named here too.
 # While the certificate is being generated it also sets up Node.js in the
 # background (ensure-node.sh: a no-op if ./node already works, else it links a
 # pre-installed Node or downloads a verified build), so the first
@@ -32,7 +35,7 @@ NODE_LOG="$(mktemp "${TMPDIR:-/tmp}/diy-mac-remote-ensure-node.XXXXXX")"
 "${SCRIPT_DIR}/ensure-node.sh" >"$NODE_LOG" 2>&1 &
 NODE_PID=$!
 
-"${SCRIPT_DIR}/setup-https.sh"
+"${SCRIPT_DIR}/setup-https.sh" "$@"
 
 if kill -0 "$NODE_PID" 2>/dev/null; then
   echo

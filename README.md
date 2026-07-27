@@ -18,36 +18,30 @@ and trusting that 🕵️ **_they_ haven't been hacked** either. So this project
 list of trusted parties as short as possible: you build and deliver it
 **yourself**, from readable sources.
 
-There are two pieces: 💻 a small server that runs on your Mac, and 📱 a web page
-you open on your iPhone. No App Store app, no compiled installer, ever — you get
-the source for both and decide how to ship and run them, guided by the recipes here.
+There are two pieces: 💻 a small server that runs on your Mac (`server.js`, plain
+JavaScript with no dependencies beyond Node.js), and 📱 a web page you open on
+your iPhone (`public/index.html`, one self-contained file). No App Store app, no
+compiled installer, ever — you get the source for both and decide how to ship and
+run them, guided by the recipes here.
 Nothing is signed by us, hosted by us, or phoning home to us — once you've downloaded
 the repo, there is no "us" in the loop.
 
 And as a nice side effect: 🎁 no cost, no ads.
 
-🔍 Don't take my word for it either. Everything between me and you — the network,
-the host, the tooling — could have altered these bits, so you could be reading a
-guide doctored into getting you hacked. If you have an LLM agent, point it at
-this repo and ask it to check the code and examples for anything clever.
+🔍 Don't take my word for it either. If you have an LLM agent, first download the
+repository and ask your LLM to check the files for anything clever.
 
 ## Requirements
 
-- 💻 A Mac and 📱 an iPhone, on the same network.
-- This repository, loaded onto your Mac — see [Get the source](#get-the-source).
-- **Node.js** — nothing to install by hand: [`ensure-node.sh`](ensure-node.sh)
-  links the one you already have, or downloads and verifies an official build
-  ([details](#get-a-nodejs)).
-- **Accessibility permission** — the first time it types for you, macOS will
-  ask. Grant it to your Terminal under _System Settings → Privacy & Security →
-  Accessibility_.
+- 💻 A Mac and 📱 an iPhone, on the same network (but [VPN guides](#use-it-over-tailscale-vpn) also exist).
+- The files of this repository on your Mac: [Get the source](#get-the-source).
+- **Node.js** — the program that runs the server code: [Get it securely](#get-a-secure-nodejs).
+- **A secure connection between server and iPhone**: [Secure it](#securing-the-connection-between-server-and-iphone).
+- **Accessibility permissions for the server**: [Grant them](#accessibility-permissions-for-the-server).
 
-> ⚠️ **Your network must be secure.** Use either a self-signed HTTPS certificate
-> installed on your iPhone (see [Serve it over HTTPS](#serve-it-over-https)), or
-> a trusted VPN like [Tailscale](https://tailscale.com) on both devices.
-> Plain HTTP also works, and the control traffic itself is still protected — but
-> a compromised router could then take over your Mac, and almost nobody can
-> verify their router, so don't. See [Security](#security) for the details.
+The sections below go in that order, and end with
+[pairing the phone](#pair-the-phone-once) — once — and
+[running it](#run-it-again), every time after that.
 
 ## Get the source
 
@@ -82,48 +76,11 @@ altered files. The whole thing is small enough to be checked in minutes:
   the way. Being _behind_ `origin/main` is fine; edits in `git status`, or a
   commit GitHub has never heard of, are not.
 
-## What you deliver
+## Get a secure Node.js
 
-Two files, and **you** get each one where it needs to go:
-
-- 💻 **The server** is `server.js` — plain JavaScript, no dependencies beyond Node.js.
-- 📱 **The app** is `public/index.html` — one self-contained web page you load onto your phone.
-
-There are several ways to deliver each, trading off trust, convenience, and
-reach. **One path is written up below** — the fast, local one, which asks a lot
-of trust from your network. More are coming: you pick the delivery that fits
-_your_ threat model and _your_ network, and we hand you the recipes.
-
-## Delivery guide: run it locally (the default DIY path)
-
-The simplest delivery method: run the server from source and load the app over
-your LAN. No build step, no signing, no store.
-
-The fastest path is [`start.sh`](start.sh), which makes sure there's a Node.js
-to run on (`ensure-node.sh`, a no-op when there already is) and starts the
-server for you:
-
-```sh
-./start.sh                # ensures ./node, then runs the server
-./start.sh tailscale      # any arguments are forwarded to server.js
-```
-
-Then scan the QR code, grant Accessibility rights, and you're controlling your
-Mac. The rest of this section explains each step if you'd rather run them by hand:
-
-1. Open your Terminal.
-2. Get this repo onto your machine (see [Get the source](#get-the-source)).
-3. Get Node.js — run [`ensure-node.sh`](ensure-node.sh) (see below).
-4. Run the server with Node.js (see below).
-5. Scan the QR code with your iPhone.
-6. Grant Accessibility rights for Terminal.
-7. Use the web app to control your Mac.
-8. (optional) Add it to your Home Screen as a full-screen app.
-
-### Get a Node.js
-
-The bundled script makes sure `./node/bin/node` is a working Node.js, and is
-**idempotent** — run it as often as you like:
+Node.js is the program that runs `server.js` — the only thing you need to
+install, and you don't install it by hand. [`ensure-node.sh`](ensure-node.sh)
+does it, and is safe to run as often as you like:
 
 ```sh
 ./ensure-node.sh              # no-op if ./node/bin/node already works;
@@ -147,73 +104,56 @@ trust" idea the rest of `diy-mac-remote` is built on.
 > build — Apple Silicon (arm64) or Intel (x64). Once `./node` exists, use
 > `./node/bin/node server.js` in place of `node server.js` below.
 
-### Run the server
+## Securing the connection between server and iPhone
 
-```sh
-node server.js               # detect (default): try tailscale first, then wifi
-node server.js wifi          # try only the Mac .local mDNS address
-node server.js tailscale     # try only the Tailscale MagicDNS name
-PORT=8700 node server.js http://192.168.0.2:8700 # custom URL verbatim
-node server.js --reset-token # rotate the auth token + print a fresh pairing QR
-```
+Once the server is running, whatever your phone loads that page from can type on
+your Mac. The commands themselves are already encrypted and authenticated (ChaCha20 +
+HMAC) before they leave the phone, so someone merely _listening_ on the network
+learns nothing. The gap is someone who can **rewrite the page** on its way to
+your phone — a compromised router, a hostile Wi-Fi. Swap in their own JavaScript
+and the encryption is theirs too, along with your keyboard.
 
-It prints the address to open on your phone plus a QR code to make it easier.
+So close it, one of two ways:
 
-**Tailscale mode restricts access to the tailnet.** Whenever the server
-advertises a Tailscale address — either `tailscale` mode, or the default `detect`
-mode when a tailnet is up — it accepts requests **only** from tailnet source
-addresses (`100.64.0.0/10` or Tailscale's IPv6 range). The port still listens on
-all interfaces, but a request from anywhere else — e.g. a co-present untrusted
-Wi-Fi — is refused with a `403` _before_ it reaches any routing, crypto, or input
-handling, so an on-path attacker on that LAN can't drive your Mac or get the page
-to rewrite. (Filtering the source rather than binding one interface avoids a
-startup race with Tailscale and survives your tailnet IP changing. The
-`wifi`/`.local` and raw-IP modes don't filter. Set `HOST=<addr>` to
-bind a single interface and opt out of the filter.) Explicit `tailscale` mode is
-strict about it: if no tailnet is up when the server starts, it **refuses to
-start** rather than silently falling back to an unfiltered LAN address (the
-default `detect` mode does fall back — that's the difference between them).
+|                            | [HTTPS certificate](#serve-it-over-https)             | [VPN / Tailscale](#use-it-over-tailscale-vpn)                       |
+| -------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| **How it protects you**    | your phone refuses any page not signed by your own CA | the link itself is encrypted end to end, so nobody is in the middle |
+| **Effort**                 | run a script, AirDrop a profile, trust it once        | install an app on both devices, sign in                             |
+| **New parties to trust**   | none — you make the certificate yourself              | Tailscale                                                           |
+| **Works off your own LAN** | no                                                    | yes                                                                 |
+| **The one command**        | `./install-self-signed.sh`                            | `./install-tailscale.sh`                                            |
 
-[`install-tailscale.sh`](install-tailscale.sh) sets this path up: it makes sure
-there's a Node.js to run on and puts a double-clickable `start.command` into
-the `diy-mac-remote` folder on the Desktop — no certificate involved. The
-generated `start.command` has `tailscale` mode baked in, so a double-click can
-never accidentally start the server in a less strict mode.
+Both are real answers, and they stack — that's `./install-tailscale-self-signed.sh`,
+which sets up both at once and is the strongest of the three (the VPN's reach
+_plus_ the certificate's second layer). Taken alone, the certificate is the purer
+fit for this project's "trust nobody" idea; the VPN is far less fiddly and
+reaches further. Before taking the VPN on its own, read
+[what you give up without the certificate](#what-you-give-up-without-the-certificate)
+— it's short, and it's the honest version.
 
-The QR (and printed link) point at that URL with a single **pairing key** appended
-as the `#fragment` (`#<key>`). The phone derives _two_ credentials from it — the
-secret that keys the crypto and a token the server only ever stores hashed (see
-[Security](#security)). The key is minted on first run. On a normal restart the
-server can no longer show it (it kept only the derived secret and the token's hash
-— that's the point), so already-paired devices just reopen the app; to pair a
-**new** device, or to recover if a phone loses its pairing, run
-`node server.js --reset-token` to mint a fresh key and QR (or double-click
-`reset-app-secrets.command` in the Desktop `diy-mac-remote` folder and restart
-the server — same effect). That rotates the pairing, so every previously
-paired device must re-pair.
+Each installer is described in the section it belongs to, and they all do the
+same three things — certificate (where applicable), Node.js, and a Desktop
+folder with a `start.command` that has the right mode baked in:
 
-### Deliver the app to your Home Screen (full-screen)
+| Installer                            | Sets up                                     | Described in                                                          |
+| ------------------------------------ | ------------------------------------------- | --------------------------------------------------------------------- |
+| `./install-self-signed.sh`           | certificate                                 | [Serve it over HTTPS](#1-run-the-setup-on-the-mac)                     |
+| `./install-tailscale.sh`             | Tailscale mode                              | [Use it over Tailscale](#use-it-over-tailscale-vpn)                    |
+| `./install-tailscale-self-signed.sh` | both — certificate covering the tailnet name | [Both at once](#both-at-once-tailscale--certificate)                   |
 
-`diy-mac-remote` ships an app icon and web manifest, so you can add the page to
-your Home Screen and launch it full-screen with no Safari chrome — your own
-hand-installed "app", no store required:
-
-1. Open the printed `http://<mac-ip>:8765` in **Safari** on the iPhone (must be
-   Safari — Chrome/Firefox on iOS can't add to the Home Screen).
-2. Tap the **Share** button → **Add to Home Screen** → **Add**.
-3. Launch it from the new "Mac Remote" icon. It opens full-screen.
-
-Notes:
-
-- Keep the Mac and phone on the same Wi-Fi or Tailscale VPN, and keep `server.js`
-  running in the Terminal.
-
-> **More delivery options coming.** This local path is one recipe. The roadmap is
-> a menu of others — Tailscale-only access, port-forwarding, and so on — each with
-> its own guide, so you can choose the delivery that matches the trust you have in
-> your network.
+**Doing neither also works**, and the control traffic stays encrypted, but the
+page-rewrite gap above stays wide open. Almost nobody can actually verify their
+router isn't compromised, so treat plain HTTP as "trying it out on my own Wi-Fi
+for five minutes", not as how you run it. See [Security](#security) for the full
+threat model.
 
 ## Serve it over HTTPS
+
+**One of the two ways to secure the connection**, the other being
+[Tailscale](#use-it-over-tailscale-vpn). This one is more work — a script to run
+and a profile to AirDrop and trust — but it adds nobody to your list of trusted
+parties: you generate the certificate on your own Mac with tools already on
+macOS, and hand it to your own phone.
 
 By default `diy-mac-remote` runs over plain HTTP, and that is deliberately safe
 against a _passive_ eavesdropper: every keystroke is already encrypted and
@@ -241,14 +181,27 @@ means trusting it for the _whole web_; this one can never speak for
 ### 1. Run the setup (on the Mac)
 
 In Terminal, run [`install-self-signed.sh`](install-self-signed.sh) — it also
-sets up Node.js in the background (see [Get a Node.js](#get-a-nodejs)) — or do
+sets up Node.js in the background (see
+[Get a secure Node.js](#get-a-secure-nodejs)) — or do
 the certificate part on its own:
 
 ```sh
 ./install-self-signed.sh               # the whole setup, Node.js included
 ./setup-https.sh                       # just the certificate + Desktop folder
 ./setup-https.sh mymac.local 10.0.0.9  # ...plus any extra name/IP the phone will use
+./setup-https.sh --tailscale           # ...plus this Mac's MagicDNS name, looked up
 ```
+
+Pass `--tailscale` if you might ever reach the Mac over your tailnet: it finds
+this Mac's MagicDNS name and adds it, so you don't have to type
+`mymac.tail9f2c.ts.net` correctly from memory. **Decide this now if you can** —
+adding a name later usually means a new CA and re-installing the profile on the
+phone (see [Notes and caveats](#notes-and-caveats)). The installers forward
+their arguments here, so `./install-self-signed.sh --tailscale` works too; if
+you want the Tailscale path proper, with its mode baked into the Desktop
+`start.command`, use
+[`./install-tailscale-self-signed.sh`](#both-at-once-tailscale--certificate)
+instead.
 
 (The installers are plain shell scripts on purpose: macOS refuses to run a
 _downloaded_ `.command` file from Finder. The `start.command` this run
@@ -317,32 +270,42 @@ soon as the certificate files exist, and the printed QR/link switches to
 ./start.sh
 ```
 
-Scan the QR in **Safari** — no warning, a padlock — pair, and Add to Home
-Screen. To temporarily go back to plain HTTP, start with `--no-tls`. To
-_require_ HTTPS (fail loudly if the cert is missing rather than silently
-falling back), use `--tls`.
+**If it prints a QR code, that's the pairing — deal with it now.** Scan it in
+**Safari** (no warning, a padlock), then **Add to Home Screen**, both steps, as
+described in [Pair the phone](#pair-the-phone-once). The key in that QR is shown
+this once and never written to disk; if it isn't inside a Home Screen app before
+the server restarts, the only way back in is resetting the pairing.
+
+To temporarily go back to plain HTTP, start with `--no-tls`. To _require_ HTTPS
+(fail loudly if the cert is missing rather than silently falling back), use
+`--tls`.
 
 ### Notes and caveats
 
-- **Re-running is always safe.** `./setup-https.sh` (or
-  `./install-self-signed.sh`) mints a fresh server certificate and
-  refreshes the Desktop folder, but reuses
-  the CA — so the phone keeps trusting the new certificate with **no
-  reinstall**. Re-run it after renaming the Mac, or to add an extra name.
-- **The certificate names only the `.local` address**, so reach the Mac by that
-  name. IP churn doesn't matter (there are no IPs in the certificate), and the
-  `.local` name is stable. If you _must_ use another address — a raw IP, a
-  Tailscale MagicDNS name — pass it to `./setup-https.sh` explicitly; the
-  server warns at startup if it's about to advertise an address the certificate
-  doesn't cover. Note that a genuinely new name (a renamed Mac) falls outside
-  the existing CA's name constraints; the script detects that, refuses to mint
-  a certificate the phone would reject, and prints the two commands to mint a
-  fresh CA (one profile re-install).
-- **HTTPS + Tailscale mode:** the default certificate doesn't cover the MagicDNS
-  name, so when serving HTTPS the default `detect` mode advertises the `.local`
-  name even when a tailnet is up. Explicit `./start.sh tailscale` still works —
-  add the MagicDNS name to the certificate first
-  (`./setup-https.sh <mac>.<tailnet>.ts.net`).
+- **Re-running is always safe**, and never costs you a reinstall _as long as the
+  names don't change_. `./setup-https.sh` (or `./install-self-signed.sh`) mints
+  a fresh server certificate and refreshes the Desktop folder while reusing the
+  CA, so the phone keeps trusting the result.
+- **Adding a name the CA has never heard of needs a new CA.** This is the one
+  re-run that can't be free: the CA is name-constrained to the names it was born
+  with, so it cannot vouch for a new one — a renamed Mac, or (much more often)
+  the Tailscale name you didn't ask for the first time. The script mints the
+  certificate, validates it against your CA exactly as the phone will, and when
+  that fails it refuses, leaves your existing files untouched, and prints the
+  two commands that mint a fresh CA. The cost is installing and trusting the new
+  profile on the phone once. **Cheapest fix: name everything up front** —
+  `./setup-https.sh --tailscale` if a tailnet is even a maybe.
+- **The certificate names only the `.local` address by default**, so reach the
+  Mac by that name. IP churn doesn't matter (there are no IPs in the
+  certificate), and the `.local` name is stable. For any other address — a raw
+  IP, a MagicDNS name — pass it explicitly; the server warns at startup if it's
+  about to advertise an address the certificate doesn't cover.
+- **HTTPS + Tailscale mode:** with the default `.local`-only certificate, the
+  `detect` mode advertises the `.local` name even when a tailnet is up (a QR the
+  phone would refuse helps nobody). Explicit `./start.sh tailscale` isn't
+  overridden — it pairs against the MagicDNS name and warns that the certificate
+  doesn't cover it, which the phone will act on by refusing the page. So put the
+  name in the certificate first: `./setup-https.sh --tailscale`.
 - **Untrusting it later:** delete the profile on the phone under **Settings →
   General → VPN & Device Management**, or turn its switch back off under
   **Certificate Trust Settings**.
@@ -356,6 +319,404 @@ falling back), use `--tls`.
   this CA does not put your general browsing in one file's hands.
 - This does not replace any of the app-layer crypto; it's defence-in-depth on top
   of it.
+
+## Use it over Tailscale (VPN)
+
+The other way to secure the connection, and the less fiddly one: no certificate
+to generate, nothing to AirDrop, no profile to trust on the phone. Both devices
+join a small private network of their own, and everything between them is
+encrypted end to end by WireGuard. It also works when the two devices _aren't_ on
+the same local network — your phone on cellular, you away from home, a guest
+Wi-Fi that keeps devices from seeing each other — which the certificate path
+can't do on its own. [Tailscale](https://tailscale.com) is the easiest one to
+set up: free for personal use, no port forwarding, no router configuration.
+
+The encryption itself is plain [WireGuard](https://www.wireguard.com) — Tailscale
+doesn't replace it, it wraps it. You can run WireGuard directly instead, and it's
+the option with nobody else in the loop: you generate the keypairs yourself, put
+each device's public key in the other's config by hand, and no third party ever
+learns which key belongs to which machine. The cost is that everything Tailscale
+does for you becomes yours to do — a reachable endpoint (port forwarding on your
+router, or a small VPS to relay through), NAT traversal, key rotation, and a
+fresh config edit on both devices every time you add one. If you already run
+WireGuard, skip Tailscale entirely — start the server with your Mac's tunnel
+address so it both binds and advertises only that interface:
+
+```sh
+HOST=10.0.0.1 ./start.sh http://10.0.0.1:8765/     # your WireGuard address
+```
+
+The steps below are for everyone else.
+
+1. Install Tailscale on **both** your Mac and your iPhone, and sign in to the
+   same account on each.
+2. On the Mac, run [`install-tailscale.sh`](install-tailscale.sh) — it makes
+   sure there's a Node.js to run on and puts a double-clickable `start.command`
+   into a `diy-mac-remote` folder on your Desktop. The generated `start.command`
+   has `tailscale` mode baked in, so a double-click can never accidentally start
+   the server in a less strict mode. (Or just run `./start.sh tailscale`.)
+   To take the certificate as well — recommended, and cheapest decided now —
+   run [`install-tailscale-self-signed.sh`](#both-at-once-tailscale--certificate)
+   instead of this one.
+3. Scan the QR code with your iPhone, in **Safari**, and then **Add it to your
+   Home Screen** — see [Pair the phone](#pair-the-phone-once). The QR is printed
+   only on that first run, and the Home Screen app is what remembers the
+   pairing; without it you'd have to reset the pairing to get a new one.
+
+### What you give up without the certificate
+
+Read this before choosing. Tailscale does cover the attack the certificate
+exists to stop: with WireGuard between the two devices, nobody on your Wi-Fi,
+your router, or your ISP can read or rewrite the page on its way to your phone.
+What changes is **who** you're relying on for that, and what's left if they fail.
+
+- **Tailscale becomes a trusted party.** The traffic is end-to-end encrypted,
+  but Tailscale's coordination server is what tells your two devices which
+  public keys belong to each other. Someone who controls that server — or who
+  gets into your Tailscale account — can enrol a device or swap a key, and your
+  phone will talk to it believing it's your Mac. From there they serve their own
+  page and own every keystroke. Tailscale's
+  [tailnet lock](https://tailscale.com/kb/1226/tailnet-lock) closes this by
+  pinning key changes to keys you hold; without it, the certificate path is the
+  one with nobody to compromise.
+- **There is no second layer.** With the certificate installed, an attacker who
+  pulled off the above still hits a wall: the phone rejects any page not signed
+  by your CA. Without it, the VPN is the only thing standing between an attacker
+  and a keylogger running on your Mac. This is the real cost — not that Tailscale
+  is weak, but that it's alone.
+- **Anything that puts you back on plain LAN exposes you completely.** What the
+  phone uses is the address baked into its Home Screen app at pairing time, so
+  this is decided when you pair, once: pair with `./start.sh tailscale` (which
+  `install-tailscale.sh` bakes in for you) and the app holds your MagicDNS name
+  for good. Pair with plain `./start.sh` and `detect` may well hand it a LAN
+  address instead — which it will then keep using, VPN or no VPN.
+- **No browser secure context**, so `crypto.subtle` stays unavailable and the
+  page falls back to its bundled pure-JS SHA-256 and ChaCha20. They're
+  test-vector-verified and fine, just slower.
+
+### Both at once (Tailscale + certificate)
+
+Every cost above is answered by adding the certificate back, and there's one
+command for it:
+
+```sh
+./install-tailscale-self-signed.sh        # needs Tailscale running on this Mac
+```
+
+It is the strongest setup this project offers: WireGuard carries the traffic
+_and_ your phone refuses any page not signed by your own CA, so neither one is
+alone. Doing it by hand is fiddly for a single reason — the certificate has to
+name the MagicDNS name, and that has to be decided before the CA goes on the
+phone — so the script settles that for you:
+
+1. [`gen-cert.sh --tailscale`](gen-cert.sh) — a CA and certificate covering both
+   this Mac's `.local` name and its MagicDNS name, looked up for you.
+2. [`ensure-node.sh`](ensure-node.sh) — make sure there's a Node.js to run on.
+3. [`ensure-desktop-folder.sh`](ensure-desktop-folder.sh) — the Desktop folder,
+   with `tailscale` mode baked into `start.command`.
+
+It needs a live tailnet, because step 1 can't name an address that doesn't exist
+yet. Without one it stops before touching anything and says so. Extra arguments
+are forwarded to `gen-cert.sh`, so you can name further addresses.
+
+**Run it before installing the CA on the phone if you can.** Adding the MagicDNS
+name to a CA that already exists means minting a new CA and installing the
+profile on the phone again — see [Notes and caveats](#notes-and-caveats). Going
+this way from the start costs one profile install, same as either path alone.
+
+From there the phone needs Tailscale, the CA installed and trusted
+([step 2](#2-install-and-trust-the-ca-on-the-iphone-once)), and then
+[pairing](#pair-the-phone-once) — once each.
+
+### No source filtering
+
+**The server does not filter by source address.** It listens on all interfaces
+in every mode, and a request is judged only by whether it carries the pairing
+credentials — not by the network it arrived on. Tailscale mode is about which
+address goes into the pairing QR, not about who may connect. If you want the
+server to answer on one interface only, bind it there: `HOST=<addr> ./start.sh`.
+
+What that costs is worth being clear about: anyone who can reach the port gets
+as far as the page and the unauthenticated `/nonce` endpoint. They cannot type
+on your Mac — every command is authenticated and encrypted — but they can knock.
+The reason it's left this way is that a source filter is a second, weaker copy
+of a decision the crypto already makes correctly, and it brought real costs:
+`detect` could silently drop it because of a certificate detail, and a server
+started before Tailscale came up refused to run at all.
+
+## Accessibility permissions for the server
+
+The server types and clicks by asking macOS to do it, through the
+**Accessibility API** — the same door screen readers, window managers and macro
+tools go through. macOS keeps that door shut by default, because whatever is
+behind it can drive your Mac: press any key, click anywhere, in any app.
+
+**What you do:** start the server and use the app. The first time it tries to
+type, macOS shows a dialog asking for Accessibility. Say yes, or grant it by
+hand under _System Settings → Privacy & Security → Accessibility_ — switch on
+whatever asked (see below for what that is), then start the server again.
+macOS reads the permission at launch, so a server that was already running when
+you flipped the switch needs a restart before it works.
+
+**What it means.** The permission is granted to a _program_, not to this
+project — and the program macOS sees is whatever it launched, not the script
+you typed. So it matters a great deal _how_ you started the server:
+
+| You start it with…                                                                         | macOS asks for, and you grant it to…                   |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `./start.sh` in a terminal, or `start.command` on the Desktop                              | **Terminal** (or iTerm, or whichever terminal you use) |
+| the bundled app from [Bundle the server as its own app](#bundle-the-server-as-its-own-app) | **DIY Remote Server**                                  |
+
+That first row is the one to think about. Granting Accessibility to Terminal
+grants it to Terminal _itself_, so **every future program you run from a
+terminal inherits the right to control your Mac** — a build script, an
+installer, a one-liner you pasted from a web page, an LLM agent you let run
+commands. None of them will ask you again; the permission is already there,
+attached to the terminal they happen to run in. That is a genuinely wide grant,
+and it long outlives this project.
+
+For a single-user Mac where you already run whatever you like from a terminal,
+that may be a trade you're happy with. If it isn't — and it's a reasonable
+thing to be uneasy about — give the permission to a bundle that contains only
+this server, so it covers this and nothing else. That's
+[Bundle the server as its own app](#bundle-the-server-as-its-own-app). You
+can also switch Terminal back off in _System Settings → Privacy & Security →
+Accessibility_ at any time; the setting is a switch, not a one-way door.
+
+## Pair the phone (once)
+
+The first time you start the server it mints a **pairing key** and prints it as
+a QR code. Scanning that QR and then saving the page to your Home Screen is the
+whole of pairing — and it happens once, not every time you use the remote.
+
+### 1. Scan the QR, in Safari
+
+The QR (and the printed link) point at the server's address with the pairing key
+appended as the `#fragment` (`#<key>`). That fragment never leaves the phone: the
+page derives _two_ credentials from it — the secret that keys the crypto, and a
+token the server only ever stores hashed (see [Security](#security)).
+
+It has to be **Safari** — Chrome and Firefox on iOS can't add a page to the Home
+Screen, and that next step isn't optional.
+
+### 2. Add it to your Home Screen (full-screen)
+
+`diy-mac-remote` ships an app icon and a web manifest, so the page becomes a real
+Home Screen icon that launches full-screen with no Safari chrome — your own
+hand-installed "app", no store required. It is also **where the pairing lives**:
+
+1. With the scanned page open in **Safari**, tap the **Share** button → **Add to
+   Home Screen** → **Add**.
+2. Launch it from the new **Mac Remote** icon. It opens full-screen, already
+   paired.
+
+**Don't skip this step.** The pairing key is shown exactly once, because
+it is never written to disk on the Mac — that's the point of it. After the
+server restarts it is simply gone: the Mac kept only the derived secret and the
+token's hash, so it has nothing left to print, and won't print a QR again. If
+the key isn't safely inside a Home Screen app by then, the only way back in is
+to reset the pairing and start over.
+
+The first time the page types something, macOS asks for
+[Accessibility rights](#accessibility-permissions-for-the-server); grant them and
+restart the server, and you're controlling your Mac.
+
+### Pairing again (a new phone, or a lost pairing)
+
+Resetting the pairing is what mints a fresh key and prints a new QR. That's the
+way to pair a **second** device, or to recover a phone whose Home Screen app was
+deleted:
+
+```sh
+node server.js --reset-token   # rotate the pairing, print a fresh QR
+```
+
+— or double-click `reset-app-secrets.command` in the Desktop `diy-mac-remote`
+folder and restart the server; same effect. Either way the rotation is total:
+**every** previously paired device loses its pairing and must scan the new QR
+(delete the stale Home Screen app first, or you'll end up with two icons).
+
+## Run it again
+
+Everything above is setup you do once, pairing included. This is the short part
+you actually repeat:
+
+1. **On the Mac:** start the server — double-click **DIY Remote Server.app**
+   (or one of the fallbacks below, if you haven't built it).
+2. **On the iPhone:** tap the **Mac Remote** icon on your Home Screen.
+
+Two icons, and that's all of it. **There is no QR to scan any more** — the Home
+Screen app carries the pairing and the address with it. A restarted server
+couldn't show you a pairing QR even if you wanted one; instead it prints a
+reminder to open that app, and how to
+[reset the pairing](#pairing-again-a-new-phone-or-a-lost-pairing) if the app is
+gone.
+
+**The app bundle is the way to start it day to day.** Build it once with
+[`./bundle-app.sh`](bundle-app.sh) — see
+[Bundle the server as its own app](#bundle-the-server-as-its-own-app) — and from
+then on the double-click is all there is: it runs in the background with no
+Dock icon and no Terminal window, with its mode baked in, and it holds the
+Accessibility permission **on its own** instead of handing it to your Terminal
+and everything you'll ever run there. Its output goes to
+`~/.diy-mac-remote/server.log`. To stop it:
+`kill $(cat ~/.diy-mac-remote/server.pid)`.
+
+**Without the bundle**, start it from the Desktop folder or the terminal
+instead. [`start.sh`](start.sh) is the whole of the Mac side: it makes sure
+there's a Node.js to run on (`ensure-node.sh`, a no-op when there already is)
+and starts the server.
+
+```sh
+./start.sh                # ensures ./node, then runs the server
+./start.sh tailscale      # any arguments are forwarded to server.js
+```
+
+Either way, start it the way you secured it: plain `./start.sh` on the
+[certificate path](#serve-it-over-https) — it serves HTTPS by itself as soon as
+the certificate files exist — and `./start.sh tailscale` on the
+[VPN path](#use-it-over-tailscale-vpn). If you ran either installer, the
+`start.command` in your Desktop `diy-mac-remote` folder already has the right
+mode baked in, so a double-click can't start it in a weaker one — and
+`./bundle-app.sh tailscale` bakes the same mode into the app.
+
+Keep the Mac and the phone on the same Wi-Fi or tailnet, and keep the server
+running — the phone loads the page from your Mac every time; nothing lives on
+the phone but the icon and its stored pairing.
+
+### Server modes
+
+The mode decides which address goes into the pairing QR — and that is all it
+does. The server always listens on `PORT` (8765 by default) on every interface,
+whatever the mode:
+
+```sh
+node server.js               # detect (default): try tailscale first, then wifi
+node server.js wifi          # try only the Mac .local mDNS address
+node server.js tailscale     # try only the Tailscale MagicDNS name
+PORT=8700 node server.js http://192.168.0.2:8700 # custom URL verbatim
+node server.js --reset-token # rotate the auth token + print a fresh pairing QR
+```
+
+**On a restart the mode does nothing at all**, because no address is resolved or
+printed — the paired app has one. So it only matters on a pairing run, and there
+it matters permanently: the address in the QR is the one the phone keeps.
+`tailscale` is the strict one — asked to pair over the tailnet with no tailnet
+up, it refuses rather than quietly pairing your phone to a LAN address it would
+then keep using. `detect` will take that LAN address without asking, which is
+fine behind the certificate and not on its own (see
+[Securing the connection](#securing-the-connection-between-server-and-iphone)).
+
+### HTTPS is not a mode
+
+It's automatic and orthogonal: the server serves HTTPS whenever a certificate
+and key exist (`cert.pem` / `key.pem` in `~/.diy-mac-remote/`, which
+[`setup-https.sh`](setup-https.sh) writes there) and plain HTTP when they don't.
+Request handling is identical either way — TLS only wraps the transport and
+flips the advertised URL to `https://`. The flags just override the automatic
+choice:
+
+```sh
+node server.js --tls         # require HTTPS: fail loudly if cert/key are missing
+node server.js --no-tls      # force plain HTTP even when they exist
+TLS_CERT=… TLS_KEY=… node server.js   # take the pair from somewhere else
+```
+
+**Where it does outrank the mode is `detect`.** With HTTPS on, if the
+certificate covers your `.local` name but not your MagicDNS name — the default
+[`gen-cert.sh`](gen-cert.sh) produces — `detect` advertises the `.local` name
+even when a tailnet is up, because a QR the phone would refuse helps nobody.
+Explicit `./start.sh tailscale` is _not_ overridden: it pairs against the
+MagicDNS name and warns that the certificate doesn't cover it. Either way the
+fix is the same — `./setup-https.sh --tailscale`, which looks the name up and
+adds it.
+
+**And the scheme is part of the pairing.** The QR carries a whole URL, so
+`http://` or `https://` is baked into the Home Screen app along with the
+address. Turning HTTPS on — or off — after pairing breaks an already-paired
+phone: it keeps asking for a scheme the server no longer speaks, and the way
+back is a fresh pairing. Set the transport up the way you want it _before_ you
+pair, not after.
+
+## Bundle the server as its own app
+
+**A guide for keeping the Accessibility grant narrow.** Instead of letting your
+Terminal hold the permission, wrap the server in an app bundle that holds it
+alone. Nothing about the code changes — the bundle runs the same `start.sh` in
+the same repo. What changes is the name in the Accessibility list, and what
+else that name covers: nothing.
+
+[`bundle-app.sh`](bundle-app.sh) builds it for you:
+
+```sh
+./bundle-app.sh                  # default server mode
+./bundle-app.sh tailscale        # bake in a mode — arguments go to start.sh
+./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
+```
+
+It makes `DIY Remote Server.app` and puts it in the `diy-mac-remote` folder on
+your Desktop if the installers made one, and in `/Applications` if they didn't
+(falling back to your own `~/Applications` if `/Applications` isn't yours to
+write to). It prints exactly where it went and what's inside. Re-running is
+safe — it replaces the bundle it made last time, and refuses to touch a
+`DIY Remote Server.app` it didn't build.
+
+What's in the bundle, all of it readable:
+
+- `Contents/MacOS/diy-remote-server` — a small shell script that runs
+  `start.sh` **in this repo**. The app is a wrapper, not a copy: update the
+  repo and the app is updated too. (Move the repo and you re-run
+  `./bundle-app.sh`.)
+- `Contents/Info.plist` — the bundle's identity: its name, its bundle
+  identifier (`local.diy-mac-remote.server`), and `LSUIElement`, which marks it
+  a background agent — no Dock icon, no window, because there's nothing to show.
+- `Contents/Resources/AppIcon.icns` — built from the app icon already in the
+  repo, so you can recognise it in the Accessibility list.
+
+The script then **ad-hoc code-signs** the bundle (`codesign -s -`, a plain
+`codesign` invocation with no certificate, no account, and nobody but your Mac
+involved — it just hashes the bundle's contents). macOS uses that signature to
+recognise the app as the same app next time, so the permission you grant sticks
+instead of being re-asked or silently lost. An unsigned bundle works too; macOS
+then identifies it by path, and moving it can cost you the permission.
+
+Then:
+
+1. **Pair from Terminal first** — `./start.sh`, scan the QR in Safari, **Add to
+   Home Screen** ([Pair the phone](#pair-the-phone-once)). The app refuses to
+   start an unpaired server on purpose: pairing prints a one-time key, the app
+   has no terminal to print to, and putting that key in a log file would break
+   the one rule the pairing key has ([never written to disk](#security)). It
+   doesn't fail silently — it puts a **dialog** on screen explaining why, with
+   an _Open Terminal_ button that opens one in the repo folder for you.
+2. **Double-click the app.** It runs in the background and writes its output to
+   `~/.diy-mac-remote/server.log` (owner-only, and inside the directory the
+   server already keeps out of Time Machine). A normal restart can't reprint
+   the pairing key, so that log holds no secrets — the refusal in step 1 is
+   what keeps that true.
+3. **Grant Accessibility to _DIY Remote Server_** when macOS asks. Then look at
+   _System Settings → Privacy & Security → Accessibility_: if **Terminal** is
+   switched on there from earlier runs, switch it off. Leaving it on keeps the
+   wide grant you just went to the trouble of avoiding.
+4. **To stop it:** `kill $(cat ~/.diy-mac-remote/server.pid)`, or quit
+   `diy-remote-server` in Activity Monitor.
+
+**How a windowless app talks to you.** Anything you actually need to read — not
+paired yet, the repo has moved, the server fell over on startup — comes up as a
+dialog box, because a background agent has no terminal and no window of its
+own. The launcher raises it to the front first (`tell me to activate`), since a
+dialog left behind another window is a dialog you never see, and gives up after
+five minutes rather than keeping the app alive forever waiting for a click. The
+dialogs belong to `osascript` itself — the launcher never tells another
+application to do anything — so they need no Automation permission and ask you
+for nothing. Everything else just goes to the log.
+
+Two honest caveats. This narrows _which program_ holds the permission; it does
+not make the server itself less powerful — the bundle can still type anything,
+which is the entire point of it. And it isn't a sandbox: the bundle is a shell
+script running your Node.js, not an App Store app with entitlements. What it
+buys you is that the switch in System Settings means "this server" instead of
+"anything I ever run in a terminal".
 
 ## The keyboard
 
@@ -555,9 +916,12 @@ ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
 **Remaining caveat:** by default this is application-layer crypto over plain
 HTTP, not TLS. It protects the _contents_ of requests, but without a trusted
 server certificate it can't stop an active man-in-the-middle who can rewrite the
-page itself. For a trusted home LAN that's fine; to close the gap, serve it over
-HTTPS — a self-signed cert you install on your phone once — see
-[Serve it over HTTPS](#serve-it-over-https).
+page itself. For a trusted home LAN that's fine; to close the gap, either
+[serve it over HTTPS](#serve-it-over-https) — a self-signed cert you install on
+your phone once — or put both devices on a VPN, which encrypts the link instead
+of authenticating the page (see
+[Use it over Tailscale](#use-it-over-tailscale-vpn) and
+[what that gives up](#what-you-give-up-without-the-certificate)).
 
 ## Files
 
@@ -572,13 +936,25 @@ HTTPS — a self-signed cert you install on your phone once — see
   see [Serve it over HTTPS](#serve-it-over-https).
 - `install-self-signed.sh` — one-command install for the self-signed HTTPS
   path: runs `setup-https.sh` with `ensure-node.sh` in the background.
+  Arguments are forwarded to `gen-cert.sh`.
 - `install-tailscale.sh` — installer for the Tailscale path: runs
   `ensure-node.sh` and drops just a `start.command` (with `tailscale` mode
   baked in) into the Desktop folder — no certificate, nothing to install on the
   phone.
+- `install-tailscale-self-signed.sh` — installer for both at once, and the
+  strongest of the three: a certificate covering this Mac's MagicDNS name as
+  well as its `.local` name, plus `tailscale` mode baked into `start.command`.
+  Needs a live tailnet, and refuses without touching anything if there isn't
+  one; see [Both at once](#both-at-once-tailscale--certificate).
+- `bundle-app.sh` — wraps the server in a `DIY Remote Server.app` bundle
+  (Info.plist, a readable shell-script launcher pointing back at this repo, an
+  icon, an ad-hoc `codesign` signature) and puts it in the Desktop
+  `diy-mac-remote` folder if it exists, else in Applications — so the
+  Accessibility permission belongs to that app instead of to your Terminal; see
+  [Bundle the server as its own app](#bundle-the-server-as-its-own-app).
 - `gen-cert.sh` — the certificate workhorse: makes a self-signed TLS certificate
   with `openssl` (already on macOS) for this Mac's `.local` name (plus any
-  names/IPs you pass).
+  names/IPs you pass, and its MagicDNS name with `--tailscale`).
 - `ensure-desktop-folder.sh` — makes sure the `diy-mac-remote` folder on the
   Desktop is up to date: the CA ready to AirDrop, an HTML how-to matching the
   current certificate, and double-clickable `start.command` /

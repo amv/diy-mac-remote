@@ -13,14 +13,15 @@ const mouse = require('./mouse');
 const qrcode = require('./qr');
 
 const PORT = Number(process.env.PORT) || 8765;
-// Explicit bind-address override. When unset we choose the bind per mode at
-// startup: Tailscale mode binds to the tailnet interface ONLY (so the server is
-// unreachable on a co-present untrusted LAN), every other mode binds to all
-// interfaces. Setting HOST forces a specific bind and opts out of that logic.
+// Explicit bind-address override. Unset (the normal case) we bind all
+// interfaces; set, we bind exactly that address — the way to narrow which
+// interface the server answers on.
 const HOST_OVERRIDE = process.env.HOST || null;
 
-// How the address shown/encoded in the QR is built. The server always *listens*
-// on PORT; this only affects what the QR/printed link points at. The secret is
+// How the address encoded in the pairing QR is built — and that is all it does.
+// The server always listens on PORT regardless of the mode, and on a normal
+// restart it resolves no address at all (the paired Home Screen app already
+// holds one), so outside a pairing run the mode has no effect. The secret is
 // appended as the #fragment, never taken from here.
 //
 // The first positional arg selects a mode:
@@ -237,16 +238,36 @@ function mint() {
   return { master, secret, tokenHash };
 }
 
+// Present HTTPS if a cert+key are available (see loadTLS), else plain HTTP. The
+// request handling is identical either way; TLS only wraps the transport and
+// flips the advertised scheme to https. Resolved before resolveBase() so the
+// advertised URL (and QR) carries the right scheme.
+let TLS;
+try {
+  TLS = loadTLS();
+} catch (err) {
+  console.error('\n❌ ' + err.message);
+  process.exit(1);
+}
+const SCHEME = TLS ? 'https' : 'http';
+
 // Resolve credentials: reuse what's stored (normal restart — no master, so no QR
 // to reprint), else mint fresh (first run, `--reset-token`, or a half-written
 // state). MASTER is non-null only when we just minted, i.e. when we can pair.
+//
+// A pairing run resolves its address BEFORE minting, because resolveBase() can
+// refuse (tailscale mode with no tailnet) and minting is not free to undo: it
+// overwrites the stored pairing and discards the only copy of the master. Mint
+// first and a refusal would leave an install nothing can ever pair against.
 let SECRET, TOKEN_HASH, MASTER = null;
+let advertised = null;
 {
   const stored = RESET_TOKEN ? { secret: null, tokenHash: null } : loadStored();
   if (stored.secret && stored.tokenHash) {
     SECRET = stored.secret;
     TOKEN_HASH = stored.tokenHash;
   } else {
+    advertised = resolveBase();
     ({ master: MASTER, secret: SECRET, tokenHash: TOKEN_HASH } = mint());
   }
 }
@@ -472,51 +493,7 @@ async function dispatchOps(res, ops) {
   }
 }
 
-// Resolve what to advertise up front (also used for the startup banner). When we
-// auto-advertise Tailscale — detected or explicitly selected, with HOST not
-// overridden — the listener still binds all interfaces, but we accept requests
-// only from tailnet source addresses: a co-present untrusted-LAN peer is refused
-// before any routing, crypto, or input handling. We bind 0.0.0.0 rather than the
-// tailnet IP on purpose — it always binds (no EADDRNOTAVAIL race while Tailscale
-// comes up) and the per-request check tolerates the tailnet appearing later or
-// its IP changing. Setting HOST forces a specific bind and opts out of the filter.
-// Present HTTPS if a cert+key are available (see loadTLS), else plain HTTP. The
-// request handling is identical either way; TLS only wraps the transport and
-// flips the advertised scheme to https. Resolved before resolveBase() so the
-// advertised URL (and QR) carries the right scheme.
-let TLS;
-try {
-  TLS = loadTLS();
-} catch (err) {
-  console.error('\n❌ ' + err.message);
-  process.exit(1);
-}
-const SCHEME = TLS ? 'https' : 'http';
-
-const advertised = resolveBase();
-const ENFORCE_TAILNET = !HOST_OVERRIDE && advertised.kind === 'tailscale';
-
-// Is a connection's remote (source) address on the tailnet? Filtering on the
-// SOURCE (not the local address) is what stops a LAN attacker: to present a
-// 100.64.0.0/10 source they'd need a TCP handshake whose SYN-ACK routes back over
-// the tailnet, not to them. Caveat: a LAN that itself uses CGNAT 100.64/10 could
-// put a local host in range — rare on home Wi-Fi.
-function isTailnetRemote(addr) {
-  if (!addr) return false;
-  if (addr.startsWith('::ffff:')) addr = addr.slice(7); // unwrap IPv4-mapped IPv6
-  if (addr === '127.0.0.1' || addr === '::1') return true; // loopback stays local (keeps curl/testing working)
-  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(addr);
-  if (m) return Number(m[1]) === 100 && Number(m[2]) >= 64 && Number(m[2]) <= 127; // 100.64.0.0/10
-  return /^fd7a:115c:a1e0:/i.test(addr); // Tailscale IPv6 ULA fd7a:115c:a1e0::/48
-}
-
 async function handler(req, res) {
-  // Tailnet-only gate: refuse anything not from the tailnet before it reaches
-  // routing, crypto, or the OS-input path (no-op unless ENFORCE_TAILNET).
-  if (ENFORCE_TAILNET && !isTailnetRemote(req.socket.remoteAddress)) {
-    return sendJSON(res, 403, { error: 'Forbidden (tailnet only)' });
-  }
-
   const url = new URL(req.url, `http://${req.headers.host}`);
   const { pathname } = url;
 
@@ -608,14 +585,11 @@ function localHostname() {
   return name ? name + '.local' : null;
 }
 
-// This node's identity on the tailnet, read straight from the Tailscale daemon —
-// the authoritative source, decoupled from the OS hostname. Returns { name, ip4 }
-// or null if Tailscale isn't installed/running or no tailnet is up.
-//   name: the MagicDNS FQDN (Self.DNSName — always resolves via MagicDNS
-//         regardless of the device's search domains), else the short HostName.
-//   ip4:  this node's Tailscale IPv4 (100.x CGNAT range, from Self.TailscaleIPs),
-//         or null. We bind the listener to it so the server answers ONLY over the
-//         tailnet, never on a co-present untrusted LAN interface.
+// This node's MagicDNS name on the tailnet, read straight from the Tailscale
+// daemon — the authoritative source, decoupled from the OS hostname. Returns
+// Self.DNSName (which always resolves via MagicDNS regardless of the device's
+// search domains), else the short HostName, else null when Tailscale isn't
+// installed/running or no tailnet is up.
 function tailscaleSelf() {
   const bins = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
   for (const bin of bins) {
@@ -629,9 +603,7 @@ function tailscaleSelf() {
       const self = status.Self || {};
       const name = self.DNSName ? self.DNSName.replace(/\.$/, '') : (self.HostName || null);
       if (!name) continue; // strip trailing dot from the FQDN above
-      const ips = Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
-      const ip4 = ips.find((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)) || null;
-      return { name, ip4 };
+      return name;
     } catch {}
   }
   return null;
@@ -653,37 +625,37 @@ function certCovers(host) {
   }
 }
 
-// Resolve the address to advertise into { url, kind, ips, tsIp4 }, where kind is
-// one of 'custom' | 'tailscale' | 'local' | 'ip' | 'none' (used to tailor the
-// startup banner and warnings). `ips` is the list of auto-detected LAN IPv4
-// addresses, only set for kind 'ip'. `tsIp4` is this node's Tailscale IPv4, set
-// only for kind 'tailscale' — the caller binds the listener to it so the server
-// answers over the tailnet only. For 'none' there's no address to advertise.
+// Resolve the address to advertise into { url, kind, ips }, where kind is one of
+// 'custom' | 'tailscale' | 'local' | 'ip' | 'none' (used to tailor the pairing
+// banner and its warnings). `ips` is the list of auto-detected LAN IPv4
+// addresses, only set for kind 'ip'. For 'none' there's no address to advertise.
 //   tailscale -> MagicDNS name
 //   wifi      -> .local mDNS name
 //   detect    -> MagicDNS name if a tailnet is up, else the .local name
-// Whenever we advertise Tailscale (explicit mode OR detect finding a live
-// tailnet) we also bind to the tailnet only; all other hostname modes fall back
-// to auto-detected LAN IP(s), never to localhost (the phone can't reach that).
+// Hostname modes fall back to auto-detected LAN IP(s), never to localhost (the
+// phone can't reach that).
+//
+// Only ever called on a pairing run, so this is where strictness belongs: the
+// address chosen here is baked into the QR and the phone keeps it for good, and
+// a pairing pointing somewhere the phone can't reach is worse than no pairing.
 function resolveBase() {
   if (OVERRIDE_URL) return { url: OVERRIDE_URL, kind: 'custom' };
 
   let host = null;
   let kind = null;
-  let tsIp4 = null; // set only when advertising Tailscale: the interface to bind
   if (MODE === 'tailscale') {
-    const ts = tailscaleSelf();
-    if (!ts) {
-      // Explicit tailscale mode is a security choice — the tailnet-only source
-      // filter comes with it. Falling back to an open LAN address would drop
-      // that filter silently, so refuse to start instead.
+    host = tailscaleSelf();
+    if (!host) {
+      // Asked to pair over the tailnet with no tailnet to pair over. Quietly
+      // pairing to a LAN address instead would hand the phone an address it
+      // keeps forever and a transport the user didn't choose, so stop.
       console.error('\n❌ Tailscale mode: no tailnet detected (is Tailscale running and');
-      console.error('   signed in on this Mac?). Refusing to fall back to an unfiltered');
-      console.error('   LAN address. Start Tailscale and try again — or, on a network');
-      console.error('   whose router you trust, run:  ./start.sh wifi');
+      console.error('   signed in on this Mac?). Refusing to pair against a LAN address');
+      console.error('   you did not ask for — the phone would keep it. Start Tailscale and');
+      console.error('   try again, or pair on your Wi-Fi with:  ./start.sh wifi');
       process.exit(1);
     }
-    host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4;
+    kind = 'tailscale';
   } else if (MODE === 'wifi') {
     host = localHostname();
     if (host) kind = 'local';
@@ -694,12 +666,12 @@ function resolveBase() {
     // certificate that vouches for the .local name but not the MagicDNS name
     // (gen-cert.sh's default): a QR the phone refuses helps nobody, so pick
     // the name the certificate actually covers.
-    const preferLocal = ts && local && !certCovers(ts.name) && certCovers(local);
-    if (ts && !preferLocal) { host = ts.name; kind = 'tailscale'; tsIp4 = ts.ip4; }
+    const preferLocal = ts && local && !certCovers(ts) && certCovers(local);
+    if (ts && !preferLocal) { host = ts; kind = 'tailscale'; }
     else if (local) { host = local; kind = 'local'; }
   }
 
-  if (host) return { url: `${SCHEME}://${host}:${PORT}/`, kind, tsIp4 };
+  if (host) return { url: `${SCHEME}://${host}:${PORT}/`, kind };
 
   // No hostname: fall back to auto-detected LAN IPv4 address(es).
   const ips = lanAddresses();
@@ -724,10 +696,12 @@ function printQR(url) {
   }
 }
 
-// Bind all interfaces (unless HOST is set). The tailnet-only restriction, when it
-// applies, is enforced per-request in the handler above (ENFORCE_TAILNET), not by
-// the bind — so there's no address-not-available race while Tailscale comes up,
-// and it keeps working if the tailnet's IP changes.
+// Bind all interfaces (unless HOST is set). Deliberately not the tailnet
+// interface even in Tailscale mode: binding 0.0.0.0 always succeeds, so there's
+// no address-not-available race while Tailscale comes up, the server survives
+// the tailnet's IP changing, and a server started before the tailnet is up stays
+// up and starts working when it arrives. What reaches the input path is decided
+// by the pairing crypto, not by the address a request arrived on.
 const bindHost = HOST_OVERRIDE || '0.0.0.0';
 
 server.on('error', (err) => {
@@ -751,50 +725,19 @@ server.listen(PORT, bindHost, () => {
     console.log('NOTE: not running on macOS — keypresses will be logged, not executed (dry-run).');
   }
 
-  const { url: base, kind, ips } = advertised;
-
-  // --- Notes about how the server behaves — relevant with or without a QR -----
-
-  if (kind === 'tailscale') {
-    if (ENFORCE_TAILNET) {
-      console.log('🔒 Accepting requests from the tailnet only' +
-        (advertised.tsIp4 ? ` (this Mac is ${advertised.tsIp4})` : '') + '.');
-    } else {
-      console.log(`⚠️  HOST is set (${bindHost}); the tailnet-only source filter is OFF —`);
-      console.log('   the server trusts whatever can reach that bind address.');
-    }
-  }
-
-  // Over plain HTTP a LAN address trusts the local network — an active attacker
-  // on a compromised router can rewrite the page itself (see README › Security).
-  // With HTTPS + an installed CA that gap is closed, so no warning then.
-  if ((kind === 'local' || kind === 'ip') && !TLS) {
-    console.log('⚠️  Serving on a LAN address — only safe on a network whose router you');
-    console.log('   trust. On an untrusted network it is suggested to use Tailscale.');
-  }
-
-  // With HTTPS on, an address the certificate doesn't vouch for is a dead end —
-  // the phone will refuse the page. Say so up front, with the fix.
-  let advertHost = null;
-  try { advertHost = new URL(base || '').hostname; } catch {}
-  if (advertHost && !certCovers(advertHost)) {
-    console.log(`⚠️  The certificate does not cover ${advertHost} — the phone will refuse`);
-    console.log(`   this address. Re-run the setup naming it (./setup-https.sh ${advertHost}),`);
-    console.log('   or advertise the covered .local name instead: ./start.sh wifi');
-  }
-
   // --- Pairing -----------------------------------------------------------------
   // The QR hands the phone the MASTER in the #fragment (never sent to the
   // server); the page derives the secret + token from it. It can only be shown
   // right after minting it (first run, or after an app-secrets reset) — on a
   // normal restart it's gone by design (disk holds only the derived secret and
-  // the token's hash). So on a restart there is nothing to hand out, and no
-  // point advertising the URL either: a paired phone carries it inside its Home
-  // Screen app, and an unpaired one needs a reset, not a link.
+  // the token's hash). So a restart has nothing to hand out and prints no
+  // address either: the paired app carries the one it was paired with, and
+  // nobody wants to retype a hostname. An unpaired phone needs a reset, not a
+  // link.
 
   if (!MASTER) {
-    console.log('\nOn the iPhone, open the Home Screen app you saved for this server' +
-      (base ? `\n(${base}) — it kept its pairing.` : ' — it kept its pairing.'));
+    console.log('\nOn the iPhone, open the Home Screen app you saved for this server —');
+    console.log('it kept its pairing, and the address that goes with it.');
     console.log('\nNo Home Screen app, or the pairing was lost? Reset the app secrets and');
     console.log('start again — a fresh pairing QR prints then (every device re-pairs):');
     console.log('  reset-app-secrets.command in the Desktop diy-mac-remote folder,');
@@ -802,7 +745,12 @@ server.listen(PORT, bindHost, () => {
     return;
   }
 
-  // A fresh pairing was minted — this is the one time it can be shown.
+  // A fresh pairing was minted — this is the one time it can be shown. Every
+  // warning below is about the pairing being made right now: the address in the
+  // QR is what the phone stores and reuses for good, so this is the moment to
+  // get it right.
+
+  const { url: base, kind, ips } = advertised;
 
   if (kind === 'none') {
     // Minted, but no address to build the QR from. The key is already gone
@@ -826,6 +774,24 @@ server.listen(PORT, bindHost, () => {
       console.log('\n⚠️  No hostname found — this IP was auto-detected. If the QR doesn\'t');
       console.log(`   work, pass the right one: node server.js http://<ip>:${PORT}/`);
     }
+  }
+
+  // Over plain HTTP a LAN address trusts the local network — an active attacker
+  // on a compromised router can rewrite the page itself (see README › Security).
+  // With HTTPS + an installed CA that gap is closed, so no warning then.
+  if ((kind === 'local' || kind === 'ip') && !TLS) {
+    console.log('\n⚠️  Pairing to a LAN address over plain HTTP — only safe on a network');
+    console.log('   whose router you trust. On an untrusted network, use Tailscale.');
+  }
+
+  // With HTTPS on, an address the certificate doesn't vouch for is a dead end —
+  // the phone will refuse the page. Say so up front, with the fix.
+  let advertHost = null;
+  try { advertHost = new URL(base).hostname; } catch {}
+  if (advertHost && !certCovers(advertHost)) {
+    console.log(`\n⚠️  The certificate does not cover ${advertHost} — the phone will refuse`);
+    console.log(`   this address. Re-run the setup naming it (./setup-https.sh ${advertHost}),`);
+    console.log('   or pair against the covered .local name instead: ./start.sh wifi');
   }
 
   if (TLS) {

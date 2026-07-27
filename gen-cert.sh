@@ -44,11 +44,20 @@
 # -----
 #   ./gen-cert.sh                      # just this Mac's .local name (default)
 #   ./gen-cert.sh foo.local 10.0.0.9   # ...plus extra names/IPs you name
+#   ./gen-cert.sh --tailscale          # ...plus this Mac's MagicDNS name, detected
 #
-# Every argument is added to the certificate as an extra Subject Alternative
-# Name (arguments that look like an IP address are added as IPs, otherwise as
-# DNS names). The certificate is only valid for the names/IPs baked into it, so
-# if your phone reaches the Mac by some other address, pass it explicitly.
+# Every non-flag argument is added to the certificate as an extra Subject
+# Alternative Name (arguments that look like an IP address are added as IPs,
+# otherwise as DNS names). The certificate is only valid for the names/IPs baked
+# into it, so if your phone reaches the Mac by some other address, pass it
+# explicitly. `--tailscale` is a shortcut for looking up this Mac's MagicDNS
+# name and passing it — the name you need to serve HTTPS over a tailnet.
+#
+# Note that adding a name to a CA that already exists usually needs a NEW CA:
+# the old one is name-constrained to the names it was born with, so it cannot
+# vouch for a new one. The verify step below catches that and tells you what to
+# run. Deciding you want the Tailscale name BEFORE installing the CA on the
+# phone saves you an install; afterwards it costs one profile re-install.
 
 set -eu
 
@@ -109,8 +118,54 @@ if [ -z "$LOCALNAME" ]; then
 fi
 [ -n "$LOCALNAME" ] && add_dns "${LOCALNAME}.local"
 
-# Anything the caller named explicitly.
-for arg in "$@"; do add_auto "$arg"; done
+# This Mac's Tailscale MagicDNS name, printed on stdout, or a non-zero exit if
+# there isn't one. Mirrors server.js's detection: ask the daemon (authoritative,
+# and decoupled from the OS hostname), skip a backend that is merely installed
+# but stopped, and strip the trailing dot off the FQDN. Reads Self's DNSName by
+# confining the search to the "Self" object, so a peer's name can't be picked up.
+tailscale_dnsname() {
+  for _bin in tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
+    command -v "$_bin" >/dev/null 2>&1 || continue
+    _out="$("$_bin" status --json 2>/dev/null)" || continue
+    # Read the value out rather than pattern-matching the whole blob, so the word
+    # "Stopped" appearing anywhere else (a peer's name, say) can't fake it.
+    _state="$(printf '%s\n' "$_out" \
+      | sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+    [ "$_state" = "Stopped" ] && continue
+    _name="$(printf '%s\n' "$_out" \
+      | sed -n '/"Self"/,/"Peer"/p' \
+      | sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      | head -n1 | sed 's/\.$//')"
+    [ -n "$_name" ] && { printf '%s\n' "$_name"; return 0; }
+  done
+  return 1
+}
+
+# Anything the caller named explicitly. `--tailscale` is resolved after the loop
+# so it can be passed in any position.
+WANT_TAILSCALE=0
+for arg in "$@"; do
+  case "$arg" in
+    --tailscale) WANT_TAILSCALE=1 ;;
+    -*) echo "ERROR: unknown option: $arg" >&2
+        echo "Usage: $0 [--tailscale] [name-or-ip ...]" >&2
+        exit 1 ;;
+    *) add_auto "$arg" ;;
+  esac
+done
+
+if [ "$WANT_TAILSCALE" -eq 1 ]; then
+  if TSNAME="$(tailscale_dnsname)"; then
+    add_dns "$TSNAME"
+    echo "Tailscale MagicDNS name detected: $TSNAME"
+  else
+    echo "ERROR: --tailscale was passed, but this Mac has no Tailscale MagicDNS" >&2
+    echo "name (is Tailscale installed, running, and signed in?). Start it and" >&2
+    echo "re-run, or pass the name yourself:" >&2
+    echo "    $0 <mac>.<tailnet>.ts.net" >&2
+    exit 1
+  fi
+fi
 
 if [ -z "$DNS_NAMES" ] && [ -z "$IP_ADDRS" ]; then
   echo "ERROR: couldn't detect this Mac's .local name, and no names were given." >&2

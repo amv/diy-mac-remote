@@ -6,10 +6,9 @@
 #   ./install-tailscale.sh
 #
 # The Tailscale path needs no certificate and nothing installed on the phone:
-# the server's own crypto protects every keystroke, and the tailnet-only source
-# filter keeps other networks out (see README > Run the server). So "install"
-# here is just: make sure there's a Node.js to run on, and put a
-# double-clickable start.command (Tailscale mode baked in) into the
+# WireGuard protects the transport and the server's own crypto protects every
+# keystroke. So "install" here is just: make sure there's a Node.js to run on,
+# and put a double-clickable start.command (Tailscale mode baked in) into the
 # `diy-mac-remote` folder on the Desktop.
 #
 # Why isn't this itself a double-clickable .command file? macOS quarantines
@@ -28,10 +27,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 "${SCRIPT_DIR}/ensure-node.sh"
 
 # The generated start.command runs "start.sh tailscale" — Tailscale mode baked
-# in, so a double-click can never accidentally start the server in a less
-# strict mode: it accepts requests from the tailnet only, and refuses to start
-# at all when no tailnet is up (rather than falling back to an open LAN
-# address).
+# in, so the pairing QR always carries this Mac's Tailscale name and never a LAN
+# address that happened to be detected instead. It only matters while pairing;
+# afterwards the phone's Home Screen app holds the address.
 "${SCRIPT_DIR}/ensure-desktop-folder.sh" --start-command-only --start-args tailscale
 
 echo
@@ -41,6 +39,7 @@ echo "  1) Install Tailscale (https://tailscale.com) on this Mac and on the"
 echo "     iPhone, signed in to the same tailnet."
 echo
 echo "  2) Double-click start.command in the Desktop diy-mac-remote folder."
-echo "     It starts the server in Tailscale mode: it advertises this Mac's"
-echo "     Tailscale name, accepts requests from the tailnet only, and refuses"
-echo "     to start when the tailnet is down. Scan the QR it prints."
+echo "     It starts the server in Tailscale mode, so the pairing QR carries"
+echo "     this Mac's Tailscale name. Scan the QR it prints in Safari, then"
+echo "     add the page to your Home Screen — that is the pairing, and it is"
+echo "     the only time the QR is shown."

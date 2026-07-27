@@ -19,6 +19,8 @@
 # Usage:
 #   ./setup-https.sh                  # certificate for this Mac's .local name
 #   ./setup-https.sh foo.local 10.0.0.9   # ...plus extra names/IPs (-> gen-cert.sh)
+#   ./setup-https.sh --tailscale      # ...plus this Mac's MagicDNS name, looked up
+#                                     #    for you (what HTTPS over a tailnet needs)
 
 set -eu
 

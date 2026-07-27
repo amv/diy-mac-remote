@@ -61,7 +61,7 @@ function startServer({ home, port, args = [], url, env = {} }) {
   return new Promise((resolve, reject) => {
     // Default: pass a custom URL so resolveBase() short-circuits to 'custom' (no
     // host detection). Pass url:null to omit it and let a mode arg (wifi/tailscale/
-    // detect) drive resolution — needed to exercise the tailnet-only source filter.
+    // detect) drive resolution — needed to exercise the mode-specific pairing paths.
     const positional = url === null ? [] : [url || `http://127.0.0.1:${port}/`];
     const child = cp.spawn(process.execPath,
       ['server.js', ...positional, ...args],
@@ -117,25 +117,41 @@ function mkTempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'diymac-test-'));
 }
 
-// Write a throwaway `tailscale` CLI (into <dir>/bin) that reports a live tailnet,
-// so the server's detection + tailnet-only filter engage in tests without real
-// Tailscale. Prepend the returned dir to PATH; ip4 becomes this "node's" address.
-function fakeTailscaleBin(dir, ip4) {
+// Write a throwaway `tailscale` CLI (into <dir>/bin) so the server's tailnet
+// detection can be driven either way in tests without real Tailscale. Prepend
+// the returned dir to PATH. `running: false` reports a stopped daemon, which is
+// how tailscaleSelf() sees "no tailnet up".
+function fakeTailscaleBin(dir, { running = true } = {}) {
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin, { recursive: true });
-  const json = JSON.stringify({
-    BackendState: 'Running',
-    Self: { DNSName: 'testmac.tail9f2c.ts.net.', HostName: 'testmac',
-            TailscaleIPs: [ip4, 'fd7a:115c:a1e0::abcd'] },
-  });
+  const json = JSON.stringify(running
+    ? { BackendState: 'Running',
+        Self: { DNSName: 'testmac.tail9f2c.ts.net.', HostName: 'testmac' } }
+    : { BackendState: 'Stopped', Self: {} });
   fs.writeFileSync(path.join(bin, 'tailscale'),
     `#!/bin/sh\n[ "$1" = "status" ] && cat <<'JSON'\n${json}\nJSON\n`, { mode: 0o755 });
   return bin;
 }
 
+// Run server.js to completion (rather than waiting for it to listen) and resolve
+// { code, out } — for the paths where startup is meant to refuse and exit.
+function runServer({ home, port, args = [], url, env = {} }) {
+  return new Promise((resolve, reject) => {
+    const positional = url === null ? [] : [url || `http://127.0.0.1:${port}/`];
+    const child = cp.spawn(process.execPath,
+      ['server.js', ...positional, ...args],
+      { cwd: PROJECT_ROOT, env: { ...process.env, HOME: home, PORT: String(port), ...env } });
+    let out = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('did not exit\n' + out)); }, 5000);
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { out += c; });
+    child.on('error', reject);
+    child.on('exit', (code) => { clearTimeout(timer); resolve({ code, out }); });
+  });
+}
+
 // Like httpReq, but choose the destination host and the client's SOURCE address
-// (localAddress) — used to exercise the tailnet source filter (a LAN source must
-// be refused with 403, loopback allowed).
+// (localAddress) — used to prove a non-loopback source is served like any other.
 function httpFrom({ host = '127.0.0.1', port, localAddress, method = 'GET', path: p = '/nonce' }) {
   const http = require('http');
   return new Promise((resolve, reject) => {
@@ -148,8 +164,8 @@ function httpFrom({ host = '127.0.0.1', port, localAddress, method = 'GET', path
   });
 }
 
-// The first non-internal IPv4 on this host (a plausibly-"LAN", non-tailnet source
-// for the filter tests), or null if the box only has loopback.
+// The first non-internal IPv4 on this host (a plausibly-"LAN" source address),
+// or null if the box only has loopback.
 function lanIPv4() {
   const ifs = os.networkInterfaces();
   for (const k of Object.keys(ifs)) for (const i of ifs[k] || [])
@@ -159,6 +175,6 @@ function lanIPv4() {
 
 module.exports = {
   PROJECT_ROOT, sha256hex, deriveCreds, buildEnvelope, getFreePort,
-  startServer, stopServer, httpReq, pairMaster, mkTempHome,
+  startServer, stopServer, runServer, httpReq, pairMaster, mkTempHome,
   fakeTailscaleBin, httpFrom, lanIPv4,
 };
