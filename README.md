@@ -13,18 +13,18 @@
   </table>
 </div>
 
-🔐 Letting something control your Mac means trusting whoever built it — and
-trusting that _they_ haven't been hacked either. So this project keeps that
+Letting something 🕹️ **control your Mac** means 🔐 **trusting whoever built it** —
+and trusting that 🕵️ **_they_ haven't been hacked** either. So this project keeps that
 list of trusted parties as short as possible: you build and deliver it
-**yourself**, from readable source.
+**yourself**, from readable sources.
 
-🧩 There are two pieces: a small server that runs on your Mac, and a web page you
-open on your iPhone. No App Store app, no compiled installer, ever — you get
+There are two pieces: 💻 a small server that runs on your Mac, and 📱 a web page
+you open on your iPhone. No App Store app, no compiled installer, ever — you get
 the source for both and decide how to get each one onto your own device, guided
 by the recipes here. Nothing is signed by us, hosted by us, or phoning home to
 us — once you've downloaded the repo, there is no "us" in the loop.
 
-🎁 Also as a nice side effect: no cost, no ads.
+Also as a nice side effect: 🎁 no cost, no ads.
 
 🔍 Don't take my word for it either. Everything between me and you — the network,
 the host, the tooling — could have altered these bits, so you could be reading a
