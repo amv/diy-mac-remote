@@ -258,7 +258,9 @@ The folder holds everything the human side of the setup needs:
 - `DIY Remote Server.app` — the same server, wrapped in an app of its own so
   the Accessibility permission belongs to it rather than to your Terminal. The
   setup builds it here for you ([`bundle-app.sh`](bundle-app.sh)); it is how
-  you start the server once the phone is paired. See
+  you start the server once the phone is paired — and it is registered to
+  [start at every login](#starting-it-at-login) from then on, which
+  `./bundle-app.sh --no-at-login` undoes. See
   [Bundle the server as its own app](#bundle-the-server-as-its-own-app).
 
 ### 2. Install and trust the CA on the iPhone (once)
@@ -658,6 +660,11 @@ same Desktop folder (or `./stop.sh` here). Quitting the app in Activity Monitor
 is not the same thing — that stops the applet, and the server it started keeps
 running.
 
+**And after the first pairing, not even the double-click.** The app is
+registered to [start when you log in](#starting-it-at-login) — a LaunchAgent
+`bundle-app.sh` writes to `~/Library/LaunchAgents`, which starts nothing until
+the phone is paired, and which `./bundle-app.sh --no-at-login` removes again.
+
 **Without the bundle**, start it from the Desktop folder or the terminal
 instead. [`start.sh`](start.sh) is the whole of the Mac side: it makes sure
 there's a Node.js to run on (`ensure-node.sh`, a no-op when there already is)
@@ -752,6 +759,7 @@ else:
 ./bundle-app.sh                  # default server mode
 ./bundle-app.sh tailscale        # bake in a mode — arguments go to start.sh
 ./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
+./bundle-app.sh --no-at-login    # don't start it at login (and undo it if set)
 ./bundle-app.sh --quiet          # where it went, without the walkthrough
                                  #   (what the installers use)
 ```
@@ -759,9 +767,11 @@ else:
 It makes `DIY Remote Server.app` and puts it in the `diy-mac-remote` folder on
 your Desktop if the installers made one, and in `/Applications` if they didn't
 (falling back to your own `~/Applications` if `/Applications` isn't yours to
-write to). It prints exactly where it went and what's inside. Re-running is
-safe — it replaces the bundle it made last time, and refuses to touch a
-`DIY Remote Server.app` it didn't build.
+write to). It also registers the app to
+[start when you log in](#starting-it-at-login) — that's the default, and
+`--no-at-login` is how you say no. It prints exactly where it went and what's
+inside. Re-running is safe — it replaces the bundle it made last time, and
+refuses to touch a `DIY Remote Server.app` it didn't build.
 
 What's in the bundle:
 
@@ -797,6 +807,78 @@ recognise the app as the same app next time, so the permission you grant sticks
 instead of being re-asked or silently lost. Here it does a second job too: it
 is what makes the applet _your_ binary rather than Apple's, which is the whole
 reason the permission lands on this app. Unsigned still runs, but you lose that.
+
+### Starting it at login
+
+`bundle-app.sh` also registers the app to start when you log in, unless you pass
+`--no-at-login`. The installers run `bundle-app.sh`, so on a fresh install this
+is already done: pair the phone once, and from then on the server is simply
+there.
+
+It's a **LaunchAgent** — one plist written to `~/Library/LaunchAgents`, which is
+a file in your own home folder and so asks macOS for no permission whatsoever.
+The alternative, adding a Login Item, goes through System Events and would want
+an _Automation_ permission over a very powerful target just to tick a checkbox;
+this project spends permissions more carefully than that. The plist is plain
+text you can read, and it names one program: the app's own executable. Deleting
+the plist is the entire undo:
+
+```sh
+./bundle-app.sh --no-at-login        # plus your mode, if any
+```
+
+or switch **DIY Remote Server** off in _System Settings → General → Login Items_,
+under _Allow in the Background_ — where macOS lists it by name, and where it
+announces it to you in the first place ("Background items added"). Nothing here
+is hidden from you by design.
+
+Six things worth knowing:
+
+- **The program it names is the app's own executable**, and that's not an
+  accident of convenience. System Settings names a background item after the
+  program launchd was handed, taken from that *file* rather than from any bundle
+  around it. Point it at `/bin/sh -c '…'` and Login Items calls the entry
+  **sh**; point it at a helper script inside the bundle and it's called
+  **at-login.sh** — neither tells you what it is or whether you want it, and
+  `AssociatedBundleIdentifiers` doesn't override them, because macOS won't take
+  our word for an association between a file it can't attribute and an ad-hoc
+  signed app of ours. Only the app's signed executable resolves to
+  **DIY Remote Server**.
+- **launchd starting the app isn't LaunchServices starting it** — but the
+  difference doesn't reach what the bundle is for. launchd is never a
+  responsible process, so the applet is responsible for itself and its children
+  exactly as it is on a double-click, and TCC recognises it by the same ad-hoc
+  signature. The Accessibility grant stays the app's.
+
+- **It's login, not boot.** The server types and clicks through the
+  Accessibility API, which only exists inside a logged-in graphical session. A
+  boot-time `LaunchDaemon` would run as root before anyone logs in and couldn't
+  drive anything anyway — so the server comes up with your session, not with the
+  Mac.
+- **It won't nag about an unpaired server.** The plist sets
+  `DIY_MAC_REMOTE_AT_LOGIN=1`, and `launcher.sh` takes that to mean nobody asked
+  for this and nobody's waiting: not paired yet becomes a line in the log rather
+  than the app's _not paired yet_ dialog at every login until you get round to
+  it. If that variable doesn't survive the applet's `do shell script`, you get
+  the dialog — which is only what the app has always done.
+- **Stopping it stops it.** There's no `KeepAlive`, so _Stop server_,
+  `stop.command` and `./stop.sh` all mean what they say; nothing brings the
+  server back until your next login.
+- **By absolute path, not by bundle identifier.**
+  `open -b local.diy-mac-remote.server` would look tidier and would survive
+  moving the app, but an identifier is answered by whichever copy LaunchServices
+  likes best — and it's easy to end up with two: build once before the Desktop
+  folder exists and the app goes to `/Applications`, build again afterwards and
+  it goes to the Desktop folder. The spare answers to the same identifier,
+  carries the same name in the Accessibility list, and runs whatever repo path
+  it was built with, so you get a login that fails while the app you double-click
+  works. A path is exactly one app. The cost is that **moving the app means
+  re-running** `./bundle-app.sh --dest <new folder>` — as does moving the
+  **repo**, since the app is a wrapper pointing back at it.
+
+Building the app doesn't start anything: `bundle-app.sh` arms the next login and
+leaves the current session alone. To start the server today, double-click the
+app as usual.
 
 ### Why there's an applet in it
 
@@ -872,6 +954,9 @@ Then:
    [`./stop.sh`](stop.sh). Quitting `diy-remote-server` in Activity Monitor is
    the one thing that won't do it — that stops the applet, and the server it
    started is its own process and carries on serving.
+5. **From then on it starts itself**, at every login, so step 2 is a one-time
+   thing — see [Starting it at login](#starting-it-at-login) above, including
+   how to turn that off.
 
 **How a windowless app talks to you.** Anything you actually need to read — not
 paired yet, the repo has moved, the server fell over on startup — comes up as a
@@ -1127,6 +1212,9 @@ of authenticating the page (see
   icon, an ad-hoc `codesign` signature) and puts it in the Desktop
   `diy-mac-remote` folder if it exists, else in Applications — so the
   Accessibility permission belongs to that app instead of to your Terminal.
+  It also writes the LaunchAgent that
+  [starts the app at login](#starting-it-at-login), unless you pass
+  `--no-at-login`.
   Every installer ends by running it (`--quiet`), so it is normally only run by
   hand to rebuild; see
   [Bundle the server as its own app](#bundle-the-server-as-its-own-app).

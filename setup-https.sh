@@ -18,7 +18,9 @@
 #   3) ./bundle-app.sh              — build `DIY Remote Server.app` into that
 #      same folder, so the Accessibility permission the server needs belongs to
 #      that app rather than to your Terminal. It is how you start the server
-#      day to day, so it is built here rather than left as homework.
+#      day to day, so it is built here rather than left as homework — and it
+#      registers the app to start at login, which ./bundle-app.sh
+#      --no-at-login undoes.
 #      (A caller that builds the app itself skips this step with
 #      DIY_MAC_REMOTE_SKIP_BUNDLE=1 — install-self-signed.sh does, and says why.)
 #
@@ -76,3 +78,6 @@ echo "After that, DIY Remote Server.app — in the same folder — is how you st
 echo "it day to day: it runs in the background, and the Accessibility permission"
 echo "belongs to it instead of to your Terminal. Pairing is the one step it"
 echo "cannot do, because the one-time key must not land in its log file."
+echo
+echo "And once you have paired, it starts by itself every time you log in."
+echo "./bundle-app.sh --no-at-login turns that off again."

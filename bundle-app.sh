@@ -60,11 +60,48 @@
 #      attached to a stable identity.
 #   4) Moves it to the `diy-mac-remote` folder on your Desktop if that folder
 #      exists (the one the installers create), else to /Applications.
+#   5) Registers it to start when you log in — see below. Pass --no-at-login to
+#      skip that, or to undo it later.
+#
+# Starting it at login
+# --------------------
+# A LaunchAgent: one plist written to ~/Library/LaunchAgents. That is a file in
+# your own home folder, so it asks macOS for no permission at all — unlike
+# adding a Login Item, which goes through System Events and would want an
+# Automation permission for a very powerful target just to tick a checkbox.
+# It is plain text, and `--no-at-login` deletes it again.
+#
+# Three things worth knowing about it:
+#
+#   - It is *login*, not boot. The server types and clicks through the
+#     Accessibility API, which only exists inside a logged-in graphical session;
+#     a boot-time LaunchDaemon would run as root before login and could not
+#     drive anything anyway.
+#   - macOS tells you. From Ventura on you get a "Background items added"
+#     notice, and the entry shows up in System Settings > General > Login Items
+#     under "Allow in the Background", where you can switch it off yourself.
+#   - What it runs is the app's own executable, by absolute path. Login Items
+#     names a background item after the program launchd was given, taken from
+#     that file rather than from any bundle around it: `/bin/sh -c '...'` is
+#     listed as "sh", a helper script is listed by its filename, and only the
+#     app's signed executable is listed as "$APP_NAME". By path and not by
+#     bundle identifier, too — an identifier is answered by whichever copy
+#     LaunchServices likes best, and an old build in another folder answers to
+#     the same one. Move the app and re-run this script.
+#   - launchd starting the app is not LaunchServices starting it, but the
+#     difference does not reach what the bundle is for: launchd is never a
+#     responsible process, so the applet is responsible for itself and its
+#     children just as it is on a double-click, and TCC knows it by the same
+#     ad-hoc signature. The Accessibility grant stays the app's.
+#
+# It does not start anything now, at build time — it arms the next login. To
+# start the server today, double-click the app as usual.
 #
 # Usage:
 #   ./bundle-app.sh                  # default server mode
 #   ./bundle-app.sh tailscale        # bake in a mode: args go to start.sh
 #   ./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
+#   ./bundle-app.sh --no-at-login    # don't start at login (removes it if set)
 #   ./bundle-app.sh --quiet          # say where it went, skip the walkthrough
 #
 # Re-running is safe: it replaces the bundle it made last time.
@@ -86,6 +123,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # --- Arguments ----------------------------------------------------------------
 DEST=""
 QUIET=false       # --quiet: where it went and what it runs, and nothing else
+AT_LOGIN=true     # --no-at-login: skip the LaunchAgent (and remove any we made)
 START_ARGS=""     # shell-quoted, for pasting into the launcher
 ARGS_SHOWN=""     # the same thing, plain, for printing back to you
 
@@ -93,6 +131,13 @@ ARGS_SHOWN=""     # the same thing, plain, for printing back to you
 # survive re-parsing by the shell, spaces and all.
 shquote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# The three characters a plist's XML cannot carry literally. Everything we put
+# in one is written here, but the app's path is not: it comes from --dest, or
+# from your home folder's name, and either can hold an ampersand.
+xmlesc() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -104,8 +149,14 @@ while [ "$#" -gt 0 ]; do
       # For the installers: they print their own steps, and two walkthroughs in
       # one run of one script is one too many.
       QUIET=true ;;
+    --at-login)
+      # The default already. Here so that "how do I turn it back on" has an
+      # answer that is not "read the script".
+      AT_LOGIN=true ;;
+    --no-at-login)
+      AT_LOGIN=false ;;
     -h|--help)
-      echo "Usage: ./bundle-app.sh [--dest DIR] [--quiet] [server.js arguments...]"
+      echo "Usage: ./bundle-app.sh [--dest DIR] [--no-at-login] [--quiet] [server.js arguments...]"
       exit 0 ;;
     *)
       # Everything else — modes (wifi, tailscale, a URL) and server.js flags
@@ -422,8 +473,18 @@ say() {
     >/dev/null 2>&1 || true
 }
 
+# A path is the one thing in these messages that we did not write, so quote it
+# for AppleScript on the way in: a " or a \\ in a folder name would otherwise end
+# the string early and take the rest of the sentence with it.
+REPO_SHOWN=\$(printf '%s' "\$REPO" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g')
+
+# Two different faults land here, and from inside this script they look alike:
+# the folder really is gone, or it is there and macOS will not let this app so
+# much as look at it. The check below tells those apart when it can -- but at
+# login there may be nobody to answer a permission prompt, and a refusal can
+# arrive as "there is nothing here" instead. So say the path, and name both.
 if [ ! -x "\$REPO/start.sh" ]; then
-  say "The diy-mac-remote folder this app points at is gone. Re-run bundle-app.sh from wherever the repo lives now."
+  say "This app cannot see the folder it runs from:\n\n    \$REPO_SHOWN\n\nEither that folder has moved, in which case re-run ./bundle-app.sh from wherever it lives now -- or it is still there and macOS is refusing this app access to it, which is what happens when it sits inside Desktop, Documents or Downloads. Moving it to your home folder settles both."
   exit 1
 fi
 
@@ -436,7 +497,7 @@ fi
 # log. Reading one byte is the smallest way to find out for real -- and it is
 # also what makes macOS show its own permission prompt, if it means to show one.
 if ! head -c 1 "\$REPO/start.sh" >/dev/null 2>&1; then
-  say "macOS will not let this app read the folder it runs from, because that folder is inside Desktop, Documents or Downloads -- folders apps need permission for.\n\nTwo ways to fix it, either is fine:\n\n1) Move the diy-mac-remote folder somewhere else (straight into your home folder is fine) and re-run ./bundle-app.sh there.\n\n2) Add this app to System Settings > Privacy & Security > Full Disk Access.\n\nThe first one asks macOS for nothing, so it is the one to prefer."
+  say "macOS will not let this app read the folder it runs from:\n\n    \$REPO_SHOWN\n\nThat folder is inside Desktop, Documents or Downloads -- folders apps need permission for.\n\nTwo ways to fix it, either is fine:\n\n1) Move the diy-mac-remote folder somewhere else (straight into your home folder is fine) and re-run ./bundle-app.sh there.\n\n2) Add this app to System Settings > Privacy & Security > Full Disk Access.\n\nThe first one asks macOS for nothing, so it is the one to prefer."
   exit 1
 fi
 
@@ -448,7 +509,19 @@ fi
 # This is the one refusal you can do something about right away, so its dialog
 # offers to open a Terminal in the repo for you. "open -a Terminal" is plain
 # LaunchServices — it asks for no permission and controls nothing.
+#
+# Except at login, where nobody asked for this app to start and nobody is
+# waiting on it: there, an unpaired server is a line in the log, not a dialog at
+# every login until you get round to pairing. The LaunchAgent sets
+# DIY_MAC_REMOTE_AT_LOGIN to tell us apart; if it does not reach us, the dialog
+# below appears instead, which is what this app has always done.
 if [ ! -f "\$DIR/secret" ] || [ ! -f "\$DIR/token.hash" ]; then
+  if [ "\${DIY_MAC_REMOTE_AT_LOGIN:-}" = "1" ]; then
+    if [ -d "\$DIR" ]; then
+      (umask 077; echo "=== \$(date) — not paired yet, so nothing was started." >>"\$LOG")
+    fi
+    exit 0
+  fi
   ANSWER=\$(/usr/bin/osascript \\
     -e 'try' -e 'tell me to activate' -e 'end try' \\
     -e "display dialog \"Not paired yet, so this app will not start.\n\nRun ./start.sh in Terminal once and scan the QR code with your iPhone, then launch this app again.\n\nWhy from Terminal: pairing prints a one-time key, and this app would write it to its log file — the one place that key must never end up.\" with title \"$APP_NAME\" buttons {\"Open Terminal\", \"OK\"} default button \"Open Terminal\" with icon caution giving up after 300" \\
@@ -675,12 +748,109 @@ fi
 mv "$STAGE/$APP_NAME.app" "$APP"
 
 # macOS caches app metadata; a fresh bundle at a familiar path is easier for
-# LaunchServices to notice if we say so. Harmless if the tool is missing.
+# LaunchServices to notice if we say so. Best effort, and the `[ -x ]` is meant:
+# lsregister is not on PATH — this absolute path is the only way to reach it —
+# and nothing here depends on it having worked.
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 [ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$APP" >/dev/null 2>&1 || true
 # The icon cache is keyed on the bundle's modification date as well, and this
 # bundle keeps the same path every time. Bump it so a changed icon is noticed.
 touch "$APP" 2>/dev/null || true
+
+# --- Start it at login --------------------------------------------------------
+# See "Starting it at login" at the top for why this is a LaunchAgent and not a
+# Login Item. Everything below is one plist in your own home folder; deleting it
+# is the whole of the undo, and --no-at-login does exactly that.
+AGENT_LABEL="$BUNDLE_ID"
+LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
+AGENT_PLIST="$LAUNCH_AGENTS/$AGENT_LABEL.plist"
+
+# launchd reads this folder afresh at every login, so writing the file is the
+# whole of "install" and deleting it is the whole of "remove". No launchctl
+# either way, and that is deliberate rather than lazy: the job named here is the
+# app itself, so `launchctl bootout` on a session where the server is running
+# would take the server down with it — which is not what anyone means by "stop
+# starting this at login". The removal takes effect at the next login, and the
+# server you have running now is left alone.
+
+AT_LOGIN_STATE="off"
+
+if $AT_LOGIN; then
+  mkdir -p "$LAUNCH_AGENTS"
+
+  # The program is the app's own executable — the applet — by absolute path.
+  #
+  # Why the executable and not a script that opens the app: System Settings >
+  # General > Login Items names a background item after the program launchd was
+  # given, and it takes that name from the file itself rather than from any
+  # bundle around it. `/bin/sh -c '...'` is listed as "sh"; a shell script inside
+  # the bundle is listed by its filename; AssociatedBundleIdentifiers does not
+  # override either, because macOS will not take our word for an association
+  # between a file it cannot attribute and an ad-hoc signed app of ours. The
+  # app's signed main executable is the one thing it will resolve to the app.
+  #
+  # This is launchd starting the app rather than LaunchServices, which is a real
+  # difference — but not one that touches what the app is *for*: launchd is
+  # never a responsible process, so the applet is responsible for itself and its
+  # children exactly as it is when you double-click it, and TCC identifies it by
+  # the ad-hoc signature either way. The Accessibility grant is the app's.
+  #
+  # And by path rather than by bundle identifier, because an identifier is
+  # answered by whichever copy LaunchServices likes best — an old build left in
+  # another folder answers to the same one, points at whatever repo it was built
+  # against, and fails in a way that takes an evening to work out. A path is
+  # exactly one app: the one just built. Move the app and this wants
+  # ./bundle-app.sh --dest run again.
+  #
+  # DIY_MAC_REMOTE_AT_LOGIN tells launcher.sh it was not you who started this,
+  # so that an unpaired server is a line in the log rather than a dialog at every
+  # login until you pair. launchd sets it here; if it does not survive the
+  # applet's `do shell script` the dialog appears instead, which is only the
+  # behaviour this app has always had.
+  cat > "$AGENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$AGENT_LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(xmlesc "$APP/Contents/MacOS/$EXEC_NAME")</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>DIY_MAC_REMOTE_AT_LOGIN</key>
+		<string>1</string>
+	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>$BUNDLE_ID</string>
+	</array>
+</dict>
+</plist>
+PLIST
+
+  # launchd ignores a plist that is group- or world-writable, and says nothing
+  # about it. Whatever umask you are running with, this one is 644.
+  chmod 644 "$AGENT_PLIST" 2>/dev/null || true
+
+  # plutil ships with macOS. A plist it cannot parse is a plist launchd will not
+  # read either, and a half-written one left in that folder is worse than none.
+  if command -v plutil >/dev/null 2>&1 && ! plutil -lint "$AGENT_PLIST" >/dev/null 2>&1; then
+    rm -f "$AGENT_PLIST"
+    echo "NOTE: could not write a valid LaunchAgent, so the app will not start at" >&2
+    echo "      login. Everything else about the app is fine — double-click it." >&2
+    AT_LOGIN_STATE="failed"
+  else
+    AT_LOGIN_STATE="on"
+  fi
+elif [ -f "$AGENT_PLIST" ]; then
+  rm -f "$AGENT_PLIST"
+  AT_LOGIN_STATE="removed"
+fi
 
 # --- Tell the human what just happened ----------------------------------------
 # A repo inside Desktop/Documents/Downloads is the one thing that can stop this
@@ -704,6 +874,24 @@ protected_folder_heads_up() {
   echo "      Full Disk Access."
 }
 
+# The LaunchAgent, for the --quiet summary the installers print. Brief, but never
+# absent: something that starts by itself from now on is not a thing to leave
+# people to find out. (The full walkthrough says the same at more length, as
+# step 5.)
+at_login_note() {
+  case "$AT_LOGIN_STATE" in
+    on)
+      echo "  It starts when you log in from now on — a LaunchAgent in"
+      echo "  ~/Library/LaunchAgents, which starts it only once the phone is paired,"
+      echo "  and does nothing at all until then. To undo: ./bundle-app.sh"
+      echo "  --no-at-login, or the switch in System Settings > General > Login Items." ;;
+    removed)
+      echo "  It no longer starts when you log in: the LaunchAgent is deleted." ;;
+    off)
+      echo "  It does not start at login (--no-at-login, and there was none to remove)." ;;
+  esac
+}
+
 echo
 echo "Built $APP_NAME.app and put it in $WHERE:"
 echo
@@ -715,6 +903,8 @@ if $QUIET; then
   echo "  it runs start.sh in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}, and it is $SIGNED"
   echo "  it is a wrapper, not a copy — pulling updates in this repo updates the"
   echo "  app, and moving the repo means re-running ./bundle-app.sh there."
+  echo
+  at_login_note
   if [ "$BUNDLE_KIND" = "applet" ] && [ "$SIGNED" != "ad-hoc signed" ]; then
     echo
     echo "  Unsigned matters more than usual here: the applet is then still"
@@ -773,5 +963,28 @@ if [ "$BUNDLE_KIND" = "applet" ]; then
   echo "     the server it started is a separate process and keeps running —"
   echo "     so use stop.command instead."
 fi
+echo
+case "$AT_LOGIN_STATE" in
+  on)
+    echo "  5) From now on it also starts when you log in, so step 2 is a"
+    echo "     one-time thing. Log in, not switch on: the server needs a"
+    echo "     logged-in desktop to type into, so it comes up with your"
+    echo "     session rather than with the Mac. Stopping it stops it —"
+    echo "     nothing brings it back until the next login."
+    echo
+    echo "     It is one plist you can read, in ~/Library/LaunchAgents, and it"
+    echo "     starts nothing until the phone is paired. Nothing was started"
+    echo "     just now; this arms the next login. To undo, either:"
+    echo
+    echo "       ./bundle-app.sh --no-at-login${ARGS_SHOWN:+$ARGS_SHOWN}"
+    echo
+    echo "     or turn '$APP_NAME' off in System Settings > General >"
+    echo "     Login Items, under 'Allow in the Background'." ;;
+  removed)
+    echo "  5) It no longer starts when you log in: the LaunchAgent is deleted." ;;
+  off)
+    echo "  5) It does not start when you log in (--no-at-login, and there was"
+    echo "     none to remove). Drop that flag and it will." ;;
+esac
 
 protected_folder_heads_up

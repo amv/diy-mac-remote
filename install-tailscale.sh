@@ -10,8 +10,9 @@
 # keystroke. So "install" here is just: make sure there's a Node.js to run on,
 # put a double-clickable start.command (Tailscale mode baked in) into the
 # `diy-mac-remote` folder on the Desktop, and build `DIY Remote Server.app`
-# (bundle-app.sh) next to it — the same mode baked in, and the Accessibility
-# permission belonging to that app instead of to your Terminal.
+# (bundle-app.sh) next to it — the same mode baked in, the Accessibility
+# permission belonging to that app instead of to your Terminal, and the app
+# registered to start at login (./bundle-app.sh --no-at-login undoes that).
 #
 # Why isn't this itself a double-clickable .command file? macOS quarantines
 # downloaded files and refuses to run a downloaded .command from Finder. Files
@@ -65,3 +66,6 @@ echo "From then on, start it by double-clicking DIY Remote Server.app in that"
 echo "same folder: no Terminal window, and the Accessibility permission belongs"
 echo "to the app rather than to your Terminal. Pairing is the one step it will"
 echo "not do — the one-time key must not end up in its log file."
+echo
+echo "And once you have paired, that app starts by itself every time you log in."
+echo "./bundle-app.sh --no-at-login tailscale turns that off again."

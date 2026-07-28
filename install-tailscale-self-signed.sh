@@ -25,7 +25,8 @@
 #   4) ./bundle-app.sh tailscale       — `DIY Remote Server.app` in that same
 #      folder, same mode baked in: the way you start the server day to day, and
 #      the thing the Accessibility permission belongs to instead of your
-#      Terminal.
+#      Terminal. It is also registered to start at login, which
+#      ./bundle-app.sh --no-at-login tailscale undoes.
 #
 # It needs a live tailnet, because step 1 cannot name an address that doesn't
 # exist yet. If Tailscale isn't running it stops before touching anything, and
@@ -109,3 +110,6 @@ echo "From then on, start it by double-clicking DIY Remote Server.app in that"
 echo "same folder: no Terminal window, and the Accessibility permission belongs"
 echo "to the app rather than to your Terminal. Pairing is the one step it will"
 echo "not do — the one-time key must not end up in its log file."
+echo
+echo "And once you have paired, that app starts by itself every time you log in."
+echo "./bundle-app.sh --no-at-login tailscale turns that off again."
