@@ -22,6 +22,10 @@
 #   3) ./ensure-desktop-folder.sh      — the `diy-mac-remote` folder on the
 #      Desktop: the CA ready to AirDrop, the how-to, the reset commands, and a
 #      start.command with Tailscale mode baked in.
+#   4) ./bundle-app.sh tailscale       — `DIY Remote Server.app` in that same
+#      folder, same mode baked in: the way you start the server day to day, and
+#      the thing the Accessibility permission belongs to instead of your
+#      Terminal.
 #
 # It needs a live tailnet, because step 1 cannot name an address that doesn't
 # exist yet. If Tailscale isn't running it stops before touching anything, and
@@ -66,6 +70,22 @@ echo
 # would quietly pair your phone to a .local address it would then keep using.
 "$SCRIPT_DIR/ensure-desktop-folder.sh" --start-args tailscale
 
+# --- The app -------------------------------------------------------------------
+# After the Desktop folder, never before: that is where bundle-app.sh puts the
+# app, and it only knows to if the folder is already there. `tailscale` for the
+# same reason start.command has it — the app must not be the one thing that can
+# start the server in a less strict mode.
+#
+# Not fatal if it fails: the certificate, Node.js and start.command above are a
+# working install on their own.
+echo
+if ! "$SCRIPT_DIR/bundle-app.sh" --quiet tailscale; then
+  echo >&2
+  echo "⚠️  Could not build DIY Remote Server.app — the rest of the install is" >&2
+  echo "   fine. Run ./bundle-app.sh tailscale on its own to see why; until" >&2
+  echo "   then, start the server with start.command in the Desktop folder." >&2
+fi
+
 # Open the folder in Finder on macOS so AirDrop is a right-click away.
 command -v open >/dev/null 2>&1 && open "$HOME/Desktop/diy-mac-remote" >/dev/null 2>&1 || true
 
@@ -84,3 +104,8 @@ echo "  3) Pair the phone. Double-click start.command in that folder; it starts"
 echo "     the server in Tailscale mode over HTTPS and prints a QR code. Scan it"
 echo "     in Safari, then add the page to your Home Screen — that saved app is"
 echo "     the pairing, and the QR is shown this one time only."
+echo
+echo "From then on, start it by double-clicking DIY Remote Server.app in that"
+echo "same folder: no Terminal window, and the Accessibility permission belongs"
+echo "to the app rather than to your Terminal. Pairing is the one step it will"
+echo "not do — the one-time key must not end up in its log file."

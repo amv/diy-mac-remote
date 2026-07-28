@@ -59,11 +59,58 @@ case "${1:-}" in
   *) echo "Unknown option: $1 (only --download is supported)" >&2; exit 1 ;;
 esac
 
+# --- 0. Which Mac is this, really? --------------------------------------------
+#
+# `uname -m` prints the CPU architecture: "arm64" on Apple Silicon (M1/M2/...)
+# and "x86_64" on older Intel Macs. There is one case where it lies — a process
+# running under Rosetta, macOS's Intel-on-Apple-Silicon translation layer, is
+# told it is on "x86_64" because that is the machine it thinks it has. Believe
+# it and we would fetch an Intel Node onto an Apple Silicon Mac, and then every
+# keystroke the server sends would go through translation for no reason.
+#
+# `sysctl sysctl.proc_translated` is 1 exactly when the asking process is being
+# translated, which is the tell. It does not exist on Intel Macs or on older
+# macOS (and not at all off macOS), so a failure means "not translated" — hence
+# the `|| echo 0`.
+HW_ARCH="$(uname -m)"
+if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
+  # We are translated, so this really is an Apple Silicon Mac.
+  HW_ARCH="arm64"
+fi
+
+# The same architecture in the spelling Node.js uses for `process.arch`, so we
+# can ask a Node binary what it is and compare.
+case "$HW_ARCH" in
+  arm64)  NODE_PROC_ARCH="arm64" ;;
+  x86_64) NODE_PROC_ARCH="x64" ;;
+  *)      NODE_PROC_ARCH="" ;;     # unknown: skip the arch checks below
+esac
+
+# Does the given Node binary run, and is it built for this Mac's own CPU?
+usable_node() {
+  [ -x "$1" ] || return 1
+  "$1" --version >/dev/null 2>&1 || return 1
+  [ -n "$NODE_PROC_ARCH" ] || return 0
+  [ "$("$1" -p process.arch 2>/dev/null)" = "$NODE_PROC_ARCH" ]
+}
+
+# A note on a thing that is deliberately NOT here any more: this script used to
+# hard-link the Node binary to a second name, "DIY Remote Server", so that a
+# permission dialog naming the *asking program* would say something meaningful
+# instead of "node". The app bundle made that unnecessary — the permission
+# belongs to the app now, not to whatever binary it runs (README > Bundle the
+# server as its own app) — and worse, it made two entirely different things
+# appear under one name in the Accessibility list: the app, and a Node binary in
+# this folder. Two names for one file is a neat trick; two things wearing one
+# name in a permissions list is a trap. If you have one left over from an older
+# checkout, delete it: rm -f "node/bin/DIY Remote Server"
+
 # --- 1. Already ensured? ------------------------------------------------------
 # Actually run it rather than just testing for the file: this also catches a
-# dangling symlink (a system Node that was later uninstalled) or a
-# half-unpacked download, and falls through to fix either.
-if ! $FORCE_DOWNLOAD && [ -x node/bin/node ] && node/bin/node --version >/dev/null 2>&1; then
+# dangling symlink (a system Node that was later uninstalled), a half-unpacked
+# download, or an Intel Node left behind by a run that happened under Rosetta —
+# and falls through to fix any of them.
+if ! $FORCE_DOWNLOAD && usable_node node/bin/node; then
   exit 0
 fi
 
@@ -78,6 +125,10 @@ if ! $FORCE_DOWNLOAD; then
               /usr/local/bin/node /opt/homebrew/bin/node; do
     [ -n "$cand" ] && [ -x "$cand" ] || continue
     case "$cand" in "$(pwd)"/node/bin/node) continue ;; esac  # never self-link
+    # An Intel Node on an Apple Silicon Mac (a Homebrew installed under Rosetta,
+    # say) would work, but only through translation. Skip it and let the pinned
+    # download below give us a native one.
+    usable_node "$cand" || continue
     MAJOR="$("$cand" --version 2>/dev/null | sed 's/^v//; s/\..*//')"
     case "$MAJOR" in *[!0-9]*|"") continue ;; esac
     [ "$MAJOR" -ge 18 ] || continue
@@ -93,11 +144,10 @@ fi
 
 # --- Pick the right build for this Mac --------------------------------------
 
-# `uname -m` prints the machine's CPU architecture. On macOS it is "arm64" on
-# Apple Silicon (M1/M2/...) and "x86_64" on older Intel Macs. We use that to
-# choose the matching Node.js tarball and its pinned checksum.
-ARCH="$(uname -m)"
-case "$ARCH" in
+# $HW_ARCH is this Mac's real CPU architecture, worked out at the top of the
+# script (and immune to the "x86_64" a translated process is told). It chooses
+# the matching Node.js tarball and its pinned checksum.
+case "$HW_ARCH" in
   arm64)
     NODE_ARCH="darwin-arm64"
     EXPECTED_SHA256="$EXPECTED_SHA256_ARM64"
@@ -107,7 +157,7 @@ case "$ARCH" in
     EXPECTED_SHA256="$EXPECTED_SHA256_X64"
     ;;
   *)
-    echo "Unsupported architecture '$ARCH' — this script only handles Apple" >&2
+    echo "Unsupported architecture '$HW_ARCH' — this script only handles Apple" >&2
     echo "Silicon (arm64) and Intel (x86_64) Macs." >&2
     exit 1
     ;;

@@ -32,6 +32,18 @@ NODE_BIN="${SCRIPT_DIR}/node/bin/node"
 # --- Start the server ---------------------------------------------------------
 
 echo "Starting server..."
+
+# Leave a note of which process this is, for stop.sh (and the double-clickable
+# stop.command next to it) to find later. `exec` below swaps this shell for node
+# without changing the process id, so $$ is already the server's pid.
+#
+# Only if the directory is already there: it is the server's own, created with
+# permissions it checks on startup, and this is not the place to second-guess
+# those. Before the first run there is nothing to stop anyway, and stop.sh can
+# find a running server by its port regardless.
+DIR="${DIY_MAC_REMOTE_DIR:-$HOME/.diy-mac-remote}"
+[ -d "$DIR" ] && echo "$$" > "$DIR/server.pid"
+
 # `exec` replaces this shell with node, so the server becomes the main process
 # (signals like Ctrl-C go straight to it, no extra shell in the middle).
 # "$@" forwards along any arguments you gave start.sh.

@@ -51,6 +51,15 @@ However you like — the repo doesn't care how it reached you:
 - If you know what git is, **`git clone`** from GitHub.
 - **Copy it from a friend** who already has it, on a USB stick or over AirDrop.
 
+**Where you put the folder does matter, though — keep it out of Desktop,
+Documents and Downloads.** Your home folder (`~/diy-mac-remote`) is the easy
+choice. macOS gates those three folders per app, and while your Terminal can
+reach them, the [app bundle](#bundle-the-server-as-its-own-app) — which has a
+permission identity of its own, deliberately — cannot, and refuses to start with
+`Operation not permitted`. Nothing else in this README cares where the folder
+lives, so this is the one moment to get it right; moving it later means
+re-running `./bundle-app.sh` from the new place.
+
 Then check what you got, because any of those routes could have handed you
 altered files. The whole thing is small enough to be checked in minutes:
 
@@ -132,14 +141,19 @@ reaches further. Before taking the VPN on its own, read
 — it's short, and it's the honest version.
 
 Each installer is described in the section it belongs to, and they all do the
-same three things — certificate (where applicable), Node.js, and a Desktop
-folder with a `start.command` that has the right mode baked in:
+same four things — certificate (where applicable), Node.js, a Desktop folder
+with a `start.command` that has the right mode baked in, and
+**`DIY Remote Server.app`** in that same folder ([why an
+app](#bundle-the-server-as-its-own-app): the Accessibility permission ends up
+belonging to it instead of to your Terminal). **You run these yourself, in
+Terminal**, from the folder you unpacked: there is nothing to double-click yet,
+and this is the part you want to be able to watch.
 
-| Installer                            | Sets up                                     | Described in                                                          |
-| ------------------------------------ | ------------------------------------------- | --------------------------------------------------------------------- |
-| `./install-self-signed.sh`           | certificate                                 | [Serve it over HTTPS](#1-run-the-setup-on-the-mac)                     |
-| `./install-tailscale.sh`             | Tailscale mode                              | [Use it over Tailscale](#use-it-over-tailscale-vpn)                    |
-| `./install-tailscale-self-signed.sh` | both — certificate covering the tailnet name | [Both at once](#both-at-once-tailscale--certificate)                   |
+| Installer                            | Sets up                                      | Described in                                         |
+| ------------------------------------ | -------------------------------------------- | ---------------------------------------------------- |
+| `./install-self-signed.sh`           | certificate                                  | [Serve it over HTTPS](#1-run-the-setup-on-the-mac)   |
+| `./install-tailscale.sh`             | Tailscale mode                               | [Use it over Tailscale](#use-it-over-tailscale-vpn)  |
+| `./install-tailscale-self-signed.sh` | both — certificate covering the tailnet name | [Both at once](#both-at-once-tailscale--certificate) |
 
 **Doing neither also works**, and the control traffic stays encrypted, but the
 page-rewrite gap above stays wide open. Almost nobody can actually verify their
@@ -187,7 +201,7 @@ the certificate part on its own:
 
 ```sh
 ./install-self-signed.sh               # the whole setup, Node.js included
-./setup-https.sh                       # just the certificate + Desktop folder
+./setup-https.sh                       # certificate + Desktop folder + the app
 ./setup-https.sh mymac.local 10.0.0.9  # ...plus any extra name/IP the phone will use
 ./setup-https.sh --tailscale           # ...plus this Mac's MagicDNS name, looked up
 ```
@@ -233,10 +247,19 @@ The folder holds everything the human side of the setup needs:
   listing the exact names the current certificate is valid for;
 - `start.command` — double-click to start the server (it points at `start.sh`
   wherever this repo lives);
+- `stop.command` — double-click to stop it again, however you started it. A thin
+  entry into [`stop.sh`](stop.sh), which finds the server by the pid file
+  `start.sh` leaves in `~/.diy-mac-remote/`, or failing that by what's listening
+  on the port — and checks it really is this repo's server before signalling it;
 - `reset-app-secrets.command` / `reset-certificate.command` — double-click to
   reset the pairing or to mint a fresh CA + certificate. Both are thin entries
   into [`reset.sh`](reset.sh): they ask for confirmation first, and the reset
-  takes effect when the server is next started.
+  takes effect when the server is next started;
+- `DIY Remote Server.app` — the same server, wrapped in an app of its own so
+  the Accessibility permission belongs to it rather than to your Terminal. The
+  setup builds it here for you ([`bundle-app.sh`](bundle-app.sh)); it is how
+  you start the server once the phone is paired. See
+  [Bundle the server as its own app](#bundle-the-server-as-its-own-app).
 
 ### 2. Install and trust the CA on the iPhone (once)
 
@@ -261,20 +284,26 @@ exactly this:
 
 ### 3. Start the server
 
-Double-click `start.command` in the Desktop `diy-mac-remote` folder, or run
-`./start.sh`. Nothing new to type — the server serves HTTPS automatically as
-soon as the certificate files exist, and the printed QR/link switches to
-`https://`:
+**Start it in Terminal this first time**, where you can watch it. Nothing new to
+type — the server serves HTTPS automatically as soon as the certificate files
+exist, and the printed QR/link switches to `https://`:
 
 ```sh
 ./start.sh
 ```
 
-**If it prints a QR code, that's the pairing — deal with it now.** Scan it in
-**Safari** (no warning, a padlock), then **Add to Home Screen**, both steps, as
-described in [Pair the phone](#pair-the-phone-once). The key in that QR is shown
-this once and never written to disk; if it isn't inside a Home Screen app before
-the server restarts, the only way back in is resetting the pairing.
+**If it prints a QR code — and on a first setup it will — that's the pairing,
+so deal with it now.** Scan it in **Safari** (no warning, a padlock), then
+**Add to Home Screen**, both steps, as described in
+[Pair the phone](#pair-the-phone-once). The key in that QR is shown this once
+and never written to disk; if it isn't inside a Home Screen app before the
+server restarts, the only way back in is resetting the pairing.
+
+That's the whole reason this first run belongs in a terminal rather than a
+double-click: a QR you can't see is a pairing you have to reset. Every start
+after this one prints no QR, so `start.command` in the Desktop `diy-mac-remote`
+folder — or the [app bundle](#bundle-the-server-as-its-own-app), which refuses
+to start unpaired for exactly this reason — is the way to do it from then on.
 
 To temporarily go back to plain HTTP, start with `--no-tls`. To _require_ HTTPS
 (fail loudly if the cert is missing rather than silently falling back), use
@@ -350,11 +379,12 @@ The steps below are for everyone else.
 
 1. Install Tailscale on **both** your Mac and your iPhone, and sign in to the
    same account on each.
-2. On the Mac, run [`install-tailscale.sh`](install-tailscale.sh) — it makes
-   sure there's a Node.js to run on and puts a double-clickable `start.command`
-   into a `diy-mac-remote` folder on your Desktop. The generated `start.command`
-   has `tailscale` mode baked in, so a double-click can never accidentally start
-   the server in a less strict mode. (Or just run `./start.sh tailscale`.)
+2. On the Mac, **in Terminal**, run
+   [`install-tailscale.sh`](install-tailscale.sh) — it makes sure there's a
+   Node.js to run on and puts a double-clickable `start.command`, plus
+   `DIY Remote Server.app`, into a `diy-mac-remote` folder on your Desktop.
+   Both have `tailscale` mode baked in, so a double-click can never accidentally
+   start the server in a less strict mode. (Or just run `./start.sh tailscale`.)
    To take the certificate as well — recommended, and cheapest decided now —
    run [`install-tailscale-self-signed.sh`](#both-at-once-tailscale--certificate)
    instead of this one.
@@ -397,7 +427,7 @@ What changes is **who** you're relying on for that, and what's left if they fail
 ### Both at once (Tailscale + certificate)
 
 Every cost above is answered by adding the certificate back, and there's one
-command for it:
+command for it — in Terminal, like the other two installers:
 
 ```sh
 ./install-tailscale-self-signed.sh        # needs Tailscale running on this Mac
@@ -414,6 +444,8 @@ phone — so the script settles that for you:
 2. [`ensure-node.sh`](ensure-node.sh) — make sure there's a Node.js to run on.
 3. [`ensure-desktop-folder.sh`](ensure-desktop-folder.sh) — the Desktop folder,
    with `tailscale` mode baked into `start.command`.
+4. [`bundle-app.sh tailscale`](bundle-app.sh) — `DIY Remote Server.app` in that
+   folder too, same mode, so the Accessibility permission lands on the app.
 
 It needs a live tailnet, because step 1 can't name an address that doesn't exist
 yet. Without one it stops before touching anything and says so. Extra arguments
@@ -454,9 +486,12 @@ behind it can drive your Mac: press any key, click anywhere, in any app.
 **What you do:** start the server and use the app. The first time it tries to
 type, macOS shows a dialog asking for Accessibility. Say yes, or grant it by
 hand under _System Settings → Privacy & Security → Accessibility_ — switch on
-whatever asked (see below for what that is), then start the server again.
-macOS reads the permission at launch, so a server that was already running when
-you flipped the switch needs a restart before it works.
+whatever asked (see below for what that is).
+
+Answering that dialog is usually all there is to it. If the **trackpad** stays
+dead afterwards while the keyboard works, restart the server: it drives the
+mouse through one long-lived helper process ([`mouse.js`](mouse.js)), and a
+helper that started before you granted the permission keeps running without it.
 
 **What it means.** The permission is granted to a _program_, not to this
 project — and the program macOS sees is whatever it launched, not the script
@@ -466,6 +501,37 @@ you typed. So it matters a great deal _how_ you started the server:
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
 | `./start.sh` in a terminal, or `start.command` on the Desktop                              | **Terminal** (or iTerm, or whichever terminal you use) |
 | the bundled app from [Bundle the server as its own app](#bundle-the-server-as-its-own-app) | **DIY Remote Server**                                  |
+
+**How the second row earns its name.** macOS doesn't hand the permission to
+whatever made the request — it walks up to the first process it considers
+_responsible_, refusing that role to Apple's own binaries along the way. Left
+alone, that walk skips the shell and lands on **Node**, and the dialog says
+`node`. The bundle avoids this by having an executable of its own that macOS
+_will_ stop at, so the permission is the app's:
+[Why there's an applet in it](#why-theres-an-applet-in-it).
+
+That is the difference between the two rows, and it's the reason to prefer the
+second one:
+
+- **Granted to the app, Node only borrows it.** The right applies to Node while
+  it runs as the app's child, and to nothing else. The same Node binary started
+  from a terminal is attributed to your terminal instead, and gets nothing.
+- **Granted to Node, it belongs to the binary.** Anything started from that file
+  inherits it, `-e '…'` included. That's what the earlier `node` dialog was
+  really offering, and it's what the fallback shape still does.
+
+Neither is a wall against yourself: grants are per user account, so other
+accounts don't inherit them, but code running as _you_ can edit `server.js`, or
+simply talk to the running server. What this bounds is the blast radius between
+_programs_, which is the whole game here.
+
+What would be narrower still is a purpose-built binary that can do nothing but
+this remote's own actions. That needs a compiler and a build step, which is
+exactly what this project trades away to stay readable end to end. Node is a
+general-purpose interpreter, and granting Accessibility to one is always a grant
+to "whatever it is asked to run" — which is precisely why it's worth the trouble
+to make sure the grant is the _app's_, and lapses the moment Node runs on its
+own.
 
 That first row is the one to think about. Granting Accessibility to Terminal
 grants it to Terminal _itself_, so **every future program you run from a
@@ -517,9 +583,31 @@ token's hash, so it has nothing left to print, and won't print a QR again. If
 the key isn't safely inside a Home Screen app by then, the only way back in is
 to reset the pairing and start over.
 
-The first time the page types something, macOS asks for
-[Accessibility rights](#accessibility-permissions-for-the-server); grant them and
-restart the server, and you're controlling your Mac.
+### 3. Close the terminal, and restart it the way you'll keep starting it
+
+Pairing is done, and two things are worth doing right now — both of them about
+not leaving a door open that you no longer need.
+
+**Close that Terminal window.** The QR — and the link printed beside it — is the
+pairing key, and pairing did not use it up: the phone derived its two
+credentials from that key, and so can anything else that reads it afterwards.
+The same secret, the same token, and the server cannot tell the two apart.
+The Mac deliberately kept no copy ([Security](#security)), which means the
+scrollback in that window is now the only copy in existence. Closing the window
+is what ends it. `Cmd-K` clears the buffer first if you want to be thorough —
+and it's worth knowing that Terminal's _reopen windows when logging back in_ can
+otherwise bring that scrollback back after a restart.
+
+**Then start the server the way you actually intend to start it** — the
+[app bundle](#bundle-the-server-as-its-own-app), or `start.command` in the
+Desktop `diy-mac-remote` folder — _before_ you let the phone type anything. The
+first keystroke is when macOS asks for
+[Accessibility](#accessibility-permissions-for-the-server), and the permission
+goes to whatever is running the server at that moment. Grant it with the server
+running from a terminal and it goes to **Terminal**, which means every program
+you ever run from a terminal inherits the right to control your Mac. Grant it to
+the app bundle and it covers this server and nothing else. It is the same single
+click either way; only the size of what you handed over differs.
 
 ### Pairing again (a new phone, or a lost pairing)
 
@@ -536,13 +624,17 @@ folder and restart the server; same effect. Either way the rotation is total:
 **every** previously paired device loses its pairing and must scan the new QR
 (delete the stale Home Screen app first, or you'll end up with two icons).
 
+A fresh QR is a fresh live key, so it earns the same treatment as the first one:
+once the new device is on its Home Screen, close the window that printed it
+([step 3](#3-close-the-terminal-and-restart-it-the-way-youll-keep-starting-it)).
+
 ## Run it again
 
 Everything above is setup you do once, pairing included. This is the short part
 you actually repeat:
 
-1. **On the Mac:** start the server — double-click **DIY Remote Server.app**
-   (or one of the fallbacks below, if you haven't built it).
+1. **On the Mac:** start the server — double-click **DIY Remote Server.app** in
+   the Desktop `diy-mac-remote` folder (or one of the fallbacks below).
 2. **On the iPhone:** tap the **Mac Remote** icon on your Home Screen.
 
 Two icons, and that's all of it. **There is no QR to scan any more** — the Home
@@ -552,15 +644,19 @@ reminder to open that app, and how to
 [reset the pairing](#pairing-again-a-new-phone-or-a-lost-pairing) if the app is
 gone.
 
-**The app bundle is the way to start it day to day.** Build it once with
-[`./bundle-app.sh`](bundle-app.sh) — see
-[Bundle the server as its own app](#bundle-the-server-as-its-own-app) — and from
-then on the double-click is all there is: it runs in the background with no
-Dock icon and no Terminal window, with its mode baked in, and it holds the
+**The app bundle is the way to start it day to day.** Every installer builds it
+for you — it's sitting in the Desktop `diy-mac-remote` folder next to
+`start.command`, and [`./bundle-app.sh`](bundle-app.sh) rebuilds it whenever you
+want (see
+[Bundle the server as its own app](#bundle-the-server-as-its-own-app)). From the
+first install on, the double-click is all there is: it runs in the background
+with no Dock icon and no Terminal window, with its mode baked in, and it holds the
 Accessibility permission **on its own** instead of handing it to your Terminal
 and everything you'll ever run there. Its output goes to
-`~/.diy-mac-remote/server.log`. To stop it:
-`kill $(cat ~/.diy-mac-remote/server.pid)`.
+`~/.diy-mac-remote/server.log`. To stop it: double-click **stop.command** in the
+same Desktop folder (or `./stop.sh` here). Quitting the app in Activity Monitor
+is not the same thing — that stops the applet, and the server it started keeps
+running.
 
 **Without the bundle**, start it from the Desktop folder or the terminal
 instead. [`start.sh`](start.sh) is the whole of the Mac side: it makes sure
@@ -646,12 +742,18 @@ alone. Nothing about the code changes — the bundle runs the same `start.sh` in
 the same repo. What changes is the name in the Accessibility list, and what
 else that name covers: nothing.
 
-[`bundle-app.sh`](bundle-app.sh) builds it for you:
+[`bundle-app.sh`](bundle-app.sh) builds it for you — and **the installers run it
+for you**, with the right mode baked in, so on a fresh install the app already
+exists and this section is background reading. Run it yourself to rebuild the
+app after moving the repo, to change the baked-in mode, or to put it somewhere
+else:
 
 ```sh
 ./bundle-app.sh                  # default server mode
 ./bundle-app.sh tailscale        # bake in a mode — arguments go to start.sh
 ./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
+./bundle-app.sh --quiet          # where it went, without the walkthrough
+                                 #   (what the installers use)
 ```
 
 It makes `DIY Remote Server.app` and puts it in the `diy-mac-remote` folder on
@@ -661,15 +763,30 @@ write to). It prints exactly where it went and what's inside. Re-running is
 safe — it replaces the bundle it made last time, and refuses to touch a
 `DIY Remote Server.app` it didn't build.
 
-What's in the bundle, all of it readable:
+What's in the bundle:
 
-- `Contents/MacOS/diy-remote-server` — a small shell script that runs
+- `Contents/MacOS/diy-remote-server` — the **applet**: a real binary, whose
+  only job is to be an identity. See
+  [Why there's an applet in it](#why-theres-an-applet-in-it) below; it is the
+  one file here you can't read, and it does one thing.
+- `Contents/Resources/Scripts/main.scpt` — the one line of AppleScript the
+  applet runs: _start `launcher.sh`, and stay alive while it does._
+- `Contents/Resources/launcher.sh` — the actual launcher, and readable like
+  everything else: it checks you're paired, redirects the log, and runs
   `start.sh` **in this repo**. The app is a wrapper, not a copy: update the
   repo and the app is updated too. (Move the repo and you re-run
   `./bundle-app.sh`.)
+- `Contents/Resources/menubar.js` — puts a **⌨ in your menu bar** while the
+  server runs, with _Stop server_ behind it, so a windowless app still has
+  something to look at and something to click. It's JavaScript rather than
+  shell because a menu bar item is a Cocoa object, and `osascript -l JavaScript`
+  can make one at run time — nothing compiled, nothing installed. If it fails to
+  start, the launcher falls back to a plain dialog with the same _Stop Server_
+  button, so there's always a way to stop the server without a terminal.
 - `Contents/Info.plist` — the bundle's identity: its name, its bundle
-  identifier (`local.diy-mac-remote.server`), and `LSUIElement`, which marks it
-  a background agent — no Dock icon, no window, because there's nothing to show.
+  identifier (`local.diy-mac-remote.server`), `LSUIElement`, which marks it a
+  background agent — no Dock icon, no window, because there's nothing to show —
+  and `LSRequiresNativeExecution`, which keeps it off Rosetta (see below).
 - `Contents/Resources/AppIcon.icns` — built from the app icon already in the
   repo, so you can recognise it in the Accessibility list.
 
@@ -677,8 +794,60 @@ The script then **ad-hoc code-signs** the bundle (`codesign -s -`, a plain
 `codesign` invocation with no certificate, no account, and nobody but your Mac
 involved — it just hashes the bundle's contents). macOS uses that signature to
 recognise the app as the same app next time, so the permission you grant sticks
-instead of being re-asked or silently lost. An unsigned bundle works too; macOS
-then identifies it by path, and moving it can cost you the permission.
+instead of being re-asked or silently lost. Here it does a second job too: it
+is what makes the applet _your_ binary rather than Apple's, which is the whole
+reason the permission lands on this app. Unsigned still runs, but you lose that.
+
+### Why there's an applet in it
+
+macOS decides who a permission belongs to by walking up from whatever made the
+request to the first process it considers **responsible** — and it refuses that
+role to Apple's own binaries. A bundle whose executable is a shell script is
+therefore skipped straight over, because `/bin/sh` is Apple's, and the walk
+lands on the next thing down: **Node** — which is how you end up with a
+permission dialog that says `node`. A grant to a general-purpose interpreter is
+not much of a boundary: it covers whatever that interpreter is next asked to
+run.
+
+So the bundle needs an executable macOS _will_ hold responsible: a real Mach-O
+of our own. `osacompile` ships with macOS and produces one — an "applet", a copy
+of Apple's AppleScript stub — and re-signing the bundle makes that copy ours
+rather than Apple's. The walk then stops at the app, and:
+
+- the permission is stored against **this bundle**, not against a Node binary
+  sitting in a folder;
+- Node gets the right only while running **as this app's child**;
+- the same Node started from a terminal is a stranger to it again, and gets
+  nothing.
+
+That last point is the one worth having. The applet is also the one file in this
+project you can't read, so it's given as little to do as possible: a single line
+of AppleScript that starts `launcher.sh` and then stays alive as its parent —
+it has to stay, because the permission is pinned to a process that's there to be
+pinned to. Everything else remains shell you can read.
+
+If `osacompile` is somehow missing, `bundle-app.sh` falls back to the old shape —
+`launcher.sh` as the executable — and says so on the way past. That still works;
+the permission just lands on Node again.
+
+**Keep the repo out of Desktop, Documents and Downloads.** macOS gates those
+three folders per app, and the bundle has an identity of its own — that's the
+point of it — so your Terminal's access doesn't carry over. A repo in one of
+them gets the app refused at launch, and the refusal is easy to misread: it
+arrives as `Operation not permitted` in the log, not as a permission prompt,
+because macOS lets an app _look at_ a file it may not _open_. `bundle-app.sh`
+warns you at build time if it's building from such a folder, and the app puts
+the same explanation in a dialog. The fix, in preference order:
+
+```sh
+mv ~/Desktop/diy-mac-remote ~/diy-mac-remote   # your home folder isn't gated
+cd ~/diy-mac-remote && ./bundle-app.sh         # plus your mode, if any
+```
+
+Moving it asks macOS for nothing. If you'd rather leave the repo where it is,
+add the app to _System Settings → Privacy & Security → Full Disk Access_
+instead — a much wider grant than the one this whole section is about
+narrowing, which is why it's the second choice.
 
 Then:
 
@@ -698,8 +867,11 @@ Then:
    _System Settings → Privacy & Security → Accessibility_: if **Terminal** is
    switched on there from earlier runs, switch it off. Leaving it on keeps the
    wide grant you just went to the trouble of avoiding.
-4. **To stop it:** `kill $(cat ~/.diy-mac-remote/server.pid)`, or quit
-   `diy-remote-server` in Activity Monitor.
+4. **To stop it:** pick _Stop server_ from the **⌨** in the menu bar. Or
+   double-click `stop.command` in the Desktop `diy-mac-remote` folder, or run
+   [`./stop.sh`](stop.sh). Quitting `diy-remote-server` in Activity Monitor is
+   the one thing that won't do it — that stops the applet, and the server it
+   started is its own process and carries on serving.
 
 **How a windowless app talks to you.** Anything you actually need to read — not
 paired yet, the repo has moved, the server fell over on startup — comes up as a
@@ -926,40 +1098,51 @@ of authenticating the page (see
 ## Files
 
 - `start.sh` — one-command launcher: runs `ensure-node.sh`, then starts the
-  server with `./node/bin/node` (forwarding any arguments to `server.js`).
+  server with `./node/bin/node` (forwarding any arguments to `server.js`), and
+  leaves its pid in `~/.diy-mac-remote/server.pid` for `stop.sh` to find.
 - `ensure-node.sh` — idempotently makes sure `./node/bin/node` works: a no-op
   if it already does, else it symlinks a pre-installed Node (v18+), else it
   fetches an official build and verifies it against a SHA-256 checksum pinned
   in this repo before unpacking it into `./node` (`--download` forces this).
 - `setup-https.sh` — one-command HTTPS setup: generates the certificate
-  (`gen-cert.sh`) and refreshes the Desktop folder (`ensure-desktop-folder.sh`);
-  see [Serve it over HTTPS](#serve-it-over-https).
+  (`gen-cert.sh`), refreshes the Desktop folder (`ensure-desktop-folder.sh`) and
+  builds the app there (`bundle-app.sh`); see
+  [Serve it over HTTPS](#serve-it-over-https).
 - `install-self-signed.sh` — one-command install for the self-signed HTTPS
-  path: runs `setup-https.sh` with `ensure-node.sh` in the background.
-  Arguments are forwarded to `gen-cert.sh`.
+  path: runs `setup-https.sh` with `ensure-node.sh` in the background, then
+  builds the app once that has finished. Arguments are forwarded to
+  `gen-cert.sh`.
 - `install-tailscale.sh` — installer for the Tailscale path: runs
-  `ensure-node.sh` and drops just a `start.command` (with `tailscale` mode
-  baked in) into the Desktop folder — no certificate, nothing to install on the
-  phone.
+  `ensure-node.sh`, drops just a `start.command` (with `tailscale` mode baked
+  in) into the Desktop folder and builds the app next to it — no certificate,
+  nothing to install on the phone.
 - `install-tailscale-self-signed.sh` — installer for both at once, and the
   strongest of the three: a certificate covering this Mac's MagicDNS name as
-  well as its `.local` name, plus `tailscale` mode baked into `start.command`.
-  Needs a live tailnet, and refuses without touching anything if there isn't
-  one; see [Both at once](#both-at-once-tailscale--certificate).
+  well as its `.local` name, plus `tailscale` mode baked into `start.command`
+  and into the app. Needs a live tailnet, and refuses without touching anything
+  if there isn't one; see
+  [Both at once](#both-at-once-tailscale--certificate).
 - `bundle-app.sh` — wraps the server in a `DIY Remote Server.app` bundle
   (Info.plist, a readable shell-script launcher pointing back at this repo, an
   icon, an ad-hoc `codesign` signature) and puts it in the Desktop
   `diy-mac-remote` folder if it exists, else in Applications — so the
-  Accessibility permission belongs to that app instead of to your Terminal; see
+  Accessibility permission belongs to that app instead of to your Terminal.
+  Every installer ends by running it (`--quiet`), so it is normally only run by
+  hand to rebuild; see
   [Bundle the server as its own app](#bundle-the-server-as-its-own-app).
 - `gen-cert.sh` — the certificate workhorse: makes a self-signed TLS certificate
   with `openssl` (already on macOS) for this Mac's `.local` name (plus any
   names/IPs you pass, and its MagicDNS name with `--tailscale`).
 - `ensure-desktop-folder.sh` — makes sure the `diy-mac-remote` folder on the
   Desktop is up to date: the CA ready to AirDrop, an HTML how-to matching the
-  current certificate, and double-clickable `start.command` /
+  current certificate, and double-clickable `start.command` / `stop.command` /
   `reset-app-secrets.command` / `reset-certificate.command` entries pointing
   at this repo.
+- `stop.sh` — stops a running server, whether it was started by the app bundle,
+  by `start.command`, or in a Terminal window you no longer have. Finds it by
+  the pid file `start.sh` writes, else by what holds the port; confirms the
+  process really is this repo's server, then asks it to stop (TERM) before
+  insisting (KILL).
 - `reset.sh` — the reset logic behind those entries: `./reset.sh app-secrets`
   forgets the pairing (fresh QR on next start, all devices re-pair);
   `./reset.sh certificate` mints a fresh CA + certificate (install the new CA
