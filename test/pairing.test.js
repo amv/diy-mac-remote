@@ -9,7 +9,7 @@ const { test, assert } = require('./harness');
 const {
   deriveCreds, buildEnvelope, getFreePort,
   startServer, stopServer, runServer, httpReq, pairMaster, mkTempHome,
-  fakeTailscaleBin, httpFrom, lanIPv4,
+  fakeTailscaleBin, httpFrom, lanIPv4, assertStaticParity,
 } = require('./helpers');
 
 // One HOME shared across the restart/reset sequence (tests run in order).
@@ -119,6 +119,29 @@ test('--reset-token rotates the pairing; old creds fail, new creds pass', async 
     r = await httpReq(state.port, 'POST', '/msg',
       buildEnvelope(next.secret, next.token, n, 1, true));
     assert.strictEqual(r.status, 200, r.body);
+  } finally {
+    await stopServer(s.child);
+  }
+});
+
+test('the node entrypoint serves public/ itself, and nothing above it', async () => {
+  const s = await startServer({ home: HOME, port: state.port });
+  try {
+    await assertStaticParity(state.port, assert);
+  } finally {
+    await stopServer(s.child);
+  }
+});
+
+test('an oversized body is refused, and the server survives it', async () => {
+  const s = await startServer({ home: HOME, port: state.port });
+  try {
+    // 64 KB is the cap; the point is that it is refused with an answer rather
+    // than by swallowing it or by dropping the connection on the floor. (The
+    // perl entrypoint is held to the same behaviour in perl.test.js.)
+    const r = await httpReq(state.port, 'POST', '/msg', 'x'.repeat(70 * 1024));
+    assert.strictEqual(r.status, 413, r.body);
+    assert.strictEqual((await httpReq(state.port, 'GET', '/nonce')).status, 200);
   } finally {
     await stopServer(s.child);
   }

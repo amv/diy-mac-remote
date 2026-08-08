@@ -6,7 +6,7 @@
 // we build that to match our xor(key, nonce, counter, data) signature.
 const crypto = require('crypto');
 const { test, assert } = require('./harness');
-const chacha20 = require('../chacha20');
+const chacha20 = require('../app/chacha20');
 
 function nativeXor(key, nonce, counter, data) {
   const ctr = Buffer.alloc(4); ctr.writeUInt32LE(counter, 0);

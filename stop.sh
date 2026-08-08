@@ -15,9 +15,15 @@
 #      port (8765 unless you set PORT).
 #
 # Either way it checks that the process it found really is this repo's server
-# before signalling it, by looking for server.js in the command line. A pid
-# file can outlive the process it named, and pids get reused; killing whatever
-# inherited the number is not a thing a script should do quietly.
+# before signalling it, by looking for server.js (the Node entrypoint) or
+# server.pl (the Node-free one) in the command line. A pid file can outlive the
+# process it named, and pids get reused; killing whatever inherited the number
+# is not a thing a script should do quietly.
+#
+# Only the entrypoint needs stopping. The backend it started —
+# `osascript -l JavaScript app/host-jxa.js` — reads its commands from a pipe the
+# entrypoint holds, sees end-of-file the moment that process is gone, and exits
+# by itself.
 #
 # It asks politely first (TERM, the signal Ctrl-C sends), waits, and only
 # escalates to KILL if the server ignores it.
@@ -44,17 +50,18 @@ proc_cwd() {
 }
 
 # Is this pid a running diy-mac-remote server from THIS repo? `ps -o command=`
-# prints the whole command line. start.sh starts the server by absolute path,
-# which settles it outright. Started by hand as `node server.js` — which the
-# README's server modes do — the path is relative and says nothing on its own,
-# so we ask where that process is running from instead.
+# prints the whole command line. start.sh and start-plain.sh start the server by
+# absolute path, which settles it outright. Started by hand as `node server.js`
+# or `perl server.pl` — which the README's server modes do — the path is
+# relative and says nothing on its own, so we ask where that process is running
+# from instead.
 is_our_server() {
   case "$1" in ''|*[!0-9]*) return 1 ;; esac        # digits only
   kill -0 "$1" 2>/dev/null || return 1              # still alive?
   cmd="$(ps -o command= -p "$1" 2>/dev/null || true)"
   case "$cmd" in
-    *"$SCRIPT_DIR/server.js"*) return 0 ;;
-    *server.js*) [ "$(proc_cwd "$1")" = "$SCRIPT_DIR" ] ;;
+    *"$SCRIPT_DIR/server.js"*|*"$SCRIPT_DIR/server.pl"*) return 0 ;;
+    *server.js*|*server.pl*) [ "$(proc_cwd "$1")" = "$SCRIPT_DIR" ] ;;
     *) return 1 ;;
   esac
 }

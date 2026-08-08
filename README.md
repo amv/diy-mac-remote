@@ -18,11 +18,24 @@ and trusting that 🕵️ **_they_ haven't been hacked** either. So this project
 list of trusted parties as short as possible: you build and deliver it
 **yourself**, from readable sources.
 
-There are two pieces: 💻 a small server that runs on your Mac (`server.js`, plain
-JavaScript with no dependencies beyond Node.js), and 📱 a web page you open on
-your iPhone (`public/index.html`, one self-contained file). No App Store app, no
-compiled installer, ever — you get the source for both and decide how to ship and
-run them, guided by the recipes here.
+There are two pieces: 💻 a small server that runs on your Mac (the [`app/`](app/)
+folder, plain JavaScript with no dependencies at all), and 📱 a web page you open
+on your iPhone (`public/index.html`, one self-contained file). No App Store app,
+no compiled installer, ever — you get the source for both and decide how to ship
+and run them, guided by the recipes here.
+
+The server runs **inside macOS's own `osascript`**, which is how it types and
+clicks without a compiler or a native module. All it needs from the outside is
+something to hold the socket, and there are two ways to give it one — pick
+either:
+
+| Entrypoint                    | Needs                       | Speaks             |
+| ----------------------------- | --------------------------- | ------------------ |
+| [`server.js`](server.js) — `./start.sh`       | Node.js ([obtained safely](#get-a-secure-nodejs)) | HTTP **and** HTTPS |
+| [`server.pl`](server.pl) — `./start-plain.sh` | nothing (Perl ships with macOS)                   | HTTP only          |
+
+Same server, same pairing, same page — see
+[Run it without Node.js](#run-it-without-nodejs).
 Nothing is signed by us, hosted by us, or phoning home to us — once you've downloaded
 the repo, there is no "us" in the loop.
 
@@ -35,7 +48,9 @@ repository and ask your LLM to check the files for anything clever.
 
 - 💻 A Mac and 📱 an iPhone, on the same network (but [VPN guides](#use-it-over-tailscale-vpn) also exist).
 - The files of this repository on your Mac: [Get the source](#get-the-source).
-- **Node.js** — the program that runs the server code: [Get it securely](#get-a-secure-nodejs).
+- **Something to hold the socket** — either **Node.js**, which also brings HTTPS:
+  [Get it securely](#get-a-secure-nodejs) — or **nothing at all**, over plain
+  HTTP: [Run it without Node.js](#run-it-without-nodejs).
 - **A secure connection between server and iPhone**: [Secure it](#securing-the-connection-between-server-and-iphone).
 - **Accessibility permissions for the server**: [Grant them](#accessibility-permissions-for-the-server).
 
@@ -68,8 +83,10 @@ altered files. The whole thing is small enough to be checked in minutes:
   tell me if anything here could harm me or my computer — hidden network calls,
   obfuscated code, shell commands that do more than they claim. Tell me if it
   is absolutely safe for me to run the commands suggested in the readme."_
-- **Read it yourself.** `server.js` and `public/index.html` are the two files
-  that matter, and both are plain, readable source with no build step and no
+- **Read it yourself.** [`app/main.js`](app/main.js) (routing, auth, what a
+  request is allowed to do) and `public/index.html` (the whole phone side) are
+  the two files that matter; `server.js` / `server.pl` are transports in front of
+  the first one. All of it is plain, readable source with no build step and no
   dependencies to hide in.
 - **Match it against GitHub — if you know git.** The strongest check, and the
   most technical. Clones only, not ZIPs; worth it for a copy from a friend:
@@ -87,9 +104,11 @@ altered files. The whole thing is small enough to be checked in minutes:
 
 ## Get a secure Node.js
 
-Node.js is the program that runs `server.js` — the only thing you need to
-install, and you don't install it by hand. [`ensure-node.sh`](ensure-node.sh)
-does it, and is safe to run as often as you like:
+Node.js runs `server.js`, the entrypoint that can serve **HTTPS** — the only
+thing you need to install, and you don't install it by hand.
+(Don't want it at all? [Run it without Node.js](#run-it-without-nodejs) — plain
+HTTP, nothing to fetch.) [`ensure-node.sh`](ensure-node.sh) does it, and is safe
+to run as often as you like:
 
 ```sh
 ./ensure-node.sh              # no-op if ./node/bin/node already works;
@@ -112,6 +131,97 @@ trust" idea the rest of `diy-mac-remote` is built on.
 > The download detects your Mac's CPU with `uname -m` and fetches the matching
 > build — Apple Silicon (arm64) or Intel (x64). Once `./node` exists, use
 > `./node/bin/node server.js` in place of `node server.js` below.
+
+## Run it without Node.js
+
+There is a second way in, and it needs nothing you don't already have:
+
+```sh
+./start-plain.sh              # perl holds the socket, osascript runs the server
+./start-plain.sh tailscale    # same arguments as ./start.sh
+```
+
+**Perl ships with macOS. So does `osascript`.** Between them there is nothing
+left to install, nothing to download, nothing to verify — and no `./node`
+directory at all. [`server.pl`](server.pl) is core-Perl-only: no CPAN, no
+modules to fetch, about 500 readable lines including its own JSON parser.
+
+**It is the same server.** Both entrypoints start the identical backend and hand
+it identical requests, so the pairing, the QR, the crypto, the keyboard and the
+trackpad are the same code either way — the tests in [`test/`](test/) drive both
+and assert they answer alike. You can switch between them freely: a phone paired
+through one works through the other, as long as the address and scheme in its
+pairing still match (see [HTTPS is not a mode](#https-is-not-a-mode)).
+
+### What you give up: HTTPS
+
+This path speaks **plain HTTP and only plain HTTP**. There is no certificate,
+no `--tls`, nothing to install on the phone. That is a deliberate limit rather
+than an omission — TLS in Perl needs a module macOS does not ship, and pulling
+one in would undo the entire reason this path exists.
+
+Your commands are still encrypted and authenticated by the app's own crypto
+(ChaCha20 + HMAC, see [Security](#security)); what plain HTTP leaves open is an
+**active** attacker on the network who can rewrite the page itself as it loads.
+So use this path in one of the two situations where that gap is already closed:
+
+- **Over Tailscale** — the recommended one. The tailnet encrypts and
+  authenticates every packet between the phone and the Mac, so there is no
+  local network left to be in the middle of. Pair with
+  `./start-plain.sh tailscale`, and read
+  [Use it over Tailscale](#use-it-over-tailscale-vpn) — including
+  [what you give up without the certificate](#what-you-give-up-without-the-certificate),
+  which applies here exactly as it does there.
+- **On a network with no route to the internet** — an isolated lab, a workshop
+  Wi-Fi with nothing else on it, a Mac and a phone on a router that goes
+  nowhere. The threat the certificate answers is someone else on the wire; if
+  there is provably nobody, there is nothing to answer.
+
+On any ordinary home or office Wi-Fi, prefer `./start.sh` with a certificate:
+[Serve it over HTTPS](#serve-it-over-https).
+
+### Everything else works the same
+
+- **Pairing** — first run prints the same QR: `./start-plain.sh`, scan, add to
+  the Home Screen. [Pair the phone](#pair-the-phone-once) applies unchanged.
+- **Stopping** — `./stop.sh` finds either entrypoint (and the backend exits by
+  itself the moment its entrypoint is gone).
+- **Modes** — `detect`, `wifi`, `tailscale`, a custom URL, `--reset-token`: all
+  identical, see [Server modes](#server-modes). The TLS flags (`--tls`,
+  `--no-tls`) are the only arguments that don't apply.
+- **The app bundle** — `./bundle-app.sh --plain` builds
+  `DIY Remote Server.app` around `start-plain.sh` instead of `start.sh`,
+  including [starting it at login](#starting-it-at-login). Everything in
+  [Bundle the server as its own app](#bundle-the-server-as-its-own-app) holds,
+  minus the Node.js download it otherwise does first.
+- **The installers** (`install-self-signed.sh`, `install-tailscale.sh`, …) are
+  the Node path: they set up certificates and the Desktop folder, and they run
+  `ensure-node.sh`. The Node-free path is driven from the Terminal, plus
+  `./bundle-app.sh --plain` if you want the app and the login start.
+
+### How it manages that
+
+`osascript -l JavaScript` — JavaScript for Automation, JXA — is a full
+JavaScript engine that can call macOS frameworks. That is how the mouse has
+always worked here. This project now runs the **whole server** in there, so the
+part that needs Node.js shrinks to "accept a TCP connection, parse HTTP, read a
+file", which Perl does out of the box. The entrypoint serves `public/` itself
+and asks the backend about the two requests that need a secret:
+
+```
+iPhone ⇄ HTTP ⇄ server.pl (or server.js) ─ public/ ─▶ straight off disk
+                                         └ /nonce, /msg ─▶ osascript -l JavaScript
+                                                           └── app/  pairing, crypto,
+                                                                     CGEvent keyboard
+                                                                     and mouse
+```
+
+What passes between them is `key: value` lines, blank line ends the message —
+no JSON, no framing, nothing to parse. That is small enough that `server.pl`
+needs no modules beyond what Perl ships with, and readable enough to follow by
+eye when something is wrong.
+
+See [How it works](#how-it-works) for the whole picture.
 
 ## Securing the connection between server and iPhone
 
@@ -179,6 +289,11 @@ that last gap: the phone refuses any page that isn't served under a certificate
 it trusts. As a bonus, an HTTPS page is a browser **"secure context"**, so the
 native `crypto.subtle` becomes available and the page uses it for faster hashing
 instead of the bundled pure-JS fallback.
+
+(Not the only way to close it: putting both devices on a
+[tailnet](#use-it-over-tailscale-vpn) closes it too, and that one needs no
+certificate — and no Node.js either, see
+[Run it without Node.js](#run-it-without-nodejs).)
 
 HTTPS here means a **self-signed certificate**, using only tools already on
 macOS (`openssl`). No download, no accounts, fully offline — nothing to trust
@@ -389,7 +504,10 @@ The steps below are for everyone else.
    start the server in a less strict mode. (Or just run `./start.sh tailscale`.)
    To take the certificate as well — recommended, and cheapest decided now —
    run [`install-tailscale-self-signed.sh`](#both-at-once-tailscale--certificate)
-   instead of this one.
+   instead of this one. To take **no Node.js** instead, run
+   `./start-plain.sh tailscale` and skip the installer: the tailnet is doing the
+   transport security here anyway, which is what makes that pairing sound
+   ([Run it without Node.js](#run-it-without-nodejs)).
 3. Scan the QR code with your iPhone, in **Safari**, and then **Add it to your
    Home Screen** — see [Pair the phone](#pair-the-phone-once). The QR is printed
    only on that first run, and the Home Screen app is what remembers the
@@ -490,50 +608,60 @@ type, macOS shows a dialog asking for Accessibility. Say yes, or grant it by
 hand under _System Settings → Privacy & Security → Accessibility_ — switch on
 whatever asked (see below for what that is).
 
-Answering that dialog is usually all there is to it. If the **trackpad** stays
-dead afterwards while the keyboard works, restart the server: it drives the
-mouse through one long-lived helper process ([`mouse.js`](mouse.js)), and a
-helper that started before you granted the permission keeps running without it.
+Answering that dialog is usually all there is to it. If input stays dead
+afterwards, restart the server: the keyboard and the trackpad are driven from
+one long-lived `osascript` process (see [How it works](#how-it-works)), and a
+process that started before you granted the permission keeps running without it.
+
+> **A second dialog asks to control _System Events_.** That one is the keyboard:
+> keystrokes go through AppleScript, which is what lets any character be typed
+> on any layout (see [How it works](#how-it-works)). Saying yes makes the
+> keyboard work; saying no leaves you with a working trackpad and nothing typed.
+> It lives in _System Settings → Privacy & Security → **Automation**_, separately
+> from Accessibility.
 
 **What it means.** The permission is granted to a _program_, not to this
 project — and the program macOS sees is whatever it launched, not the script
 you typed. So it matters a great deal _how_ you started the server:
 
-| You start it with…                                                                         | macOS asks for, and you grant it to…                   |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| `./start.sh` in a terminal, or `start.command` on the Desktop                              | **Terminal** (or iTerm, or whichever terminal you use) |
-| the bundled app from [Bundle the server as its own app](#bundle-the-server-as-its-own-app) | **DIY Remote Server**                                  |
+| You start it with…                                                                          | macOS asks for, and you grant it to…                   |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `./start.sh` or `./start-plain.sh` in a terminal, or `start.command` on the Desktop         | **Terminal** (or iTerm, or whichever terminal you use) |
+| the bundled app from [Bundle the server as its own app](#bundle-the-server-as-its-own-app)  | **DIY Remote Server**                                  |
 
 **How the second row earns its name.** macOS doesn't hand the permission to
 whatever made the request — it walks up to the first process it considers
-_responsible_, refusing that role to Apple's own binaries along the way. Left
-alone, that walk skips the shell and lands on **Node**, and the dialog says
-`node`. The bundle avoids this by having an executable of its own that macOS
-_will_ stop at, so the permission is the app's:
+_responsible_, refusing that role to Apple's own binaries along the way. The
+process actually posting the events is `osascript`, which is Apple's, so the
+walk goes straight past it, past the shell, and lands on whatever started it:
+**Node** (or **Perl**, or your terminal), and the dialog names that. The bundle
+avoids this by having an executable of its own that macOS _will_ stop at, so the
+permission is the app's:
 [Why there's an applet in it](#why-theres-an-applet-in-it).
 
 That is the difference between the two rows, and it's the reason to prefer the
 second one:
 
-- **Granted to the app, Node only borrows it.** The right applies to Node while
-  it runs as the app's child, and to nothing else. The same Node binary started
-  from a terminal is attributed to your terminal instead, and gets nothing.
-- **Granted to Node, it belongs to the binary.** Anything started from that file
-  inherits it, `-e '…'` included. That's what the earlier `node` dialog was
-  really offering, and it's what the fallback shape still does.
+- **Granted to the app, the interpreter only borrows it.** The right applies
+  while Node (or Perl) runs as the app's child, and to nothing else. The same
+  binary started from a terminal is attributed to your terminal instead, and
+  gets nothing.
+- **Granted to the interpreter, it belongs to the binary.** Anything started
+  from that file inherits it, `-e '…'` included. That's what the earlier `node`
+  dialog was really offering, and it's what the fallback shape still does.
 
 Neither is a wall against yourself: grants are per user account, so other
-accounts don't inherit them, but code running as _you_ can edit `server.js`, or
-simply talk to the running server. What this bounds is the blast radius between
-_programs_, which is the whole game here.
+accounts don't inherit them, but code running as _you_ can edit `app/main.js`,
+or simply talk to the running server. What this bounds is the blast radius
+between _programs_, which is the whole game here.
 
 What would be narrower still is a purpose-built binary that can do nothing but
 this remote's own actions. That needs a compiler and a build step, which is
-exactly what this project trades away to stay readable end to end. Node is a
-general-purpose interpreter, and granting Accessibility to one is always a grant
-to "whatever it is asked to run" — which is precisely why it's worth the trouble
-to make sure the grant is the _app's_, and lapses the moment Node runs on its
-own.
+exactly what this project trades away to stay readable end to end. Node, Perl
+and `osascript` are all general-purpose interpreters, and granting Accessibility
+to one is always a grant to "whatever it is asked to run" — which is precisely
+why it's worth the trouble to make sure the grant is the _app's_, and lapses the
+moment the interpreter runs on its own.
 
 That first row is the one to think about. Granting Accessibility to Terminal
 grants it to Terminal _itself_, so **every future program you run from a
@@ -619,6 +747,7 @@ deleted:
 
 ```sh
 node server.js --reset-token   # rotate the pairing, print a fresh QR
+perl server.pl --reset-token   # ...or the same, on the Node-free path
 ```
 
 — or double-click `reset-app-secrets.command` in the Desktop `diy-mac-remote`
@@ -673,6 +802,7 @@ and starts the server.
 ```sh
 ./start.sh                # ensures ./node, then runs the server
 ./start.sh tailscale      # any arguments are forwarded to server.js
+./start-plain.sh          # the same server with no Node.js at all (plain HTTP)
 ```
 
 Either way, start it the way you secured it: plain `./start.sh` on the
@@ -701,6 +831,10 @@ PORT=8700 node server.js http://192.168.0.2:8700 # custom URL verbatim
 node server.js --reset-token # rotate the auth token + print a fresh pairing QR
 ```
 
+The [Node-free entrypoint](#run-it-without-nodejs) takes exactly the same
+arguments — `perl server.pl tailscale`, `./start-plain.sh --reset-token`, and so
+on. Only the TLS flags below are Node-only.
+
 **On a restart the mode does nothing at all**, because no address is resolved or
 printed — the paired app has one. So it only matters on a pairing run, and there
 it matters permanently: the address in the QR is the one the phone keeps.
@@ -725,6 +859,11 @@ node server.js --no-tls      # force plain HTTP even when they exist
 TLS_CERT=… TLS_KEY=… node server.js   # take the pair from somewhere else
 ```
 
+**This is the one thing the two entrypoints don't share.** TLS lives in the
+entrypoint, and [`server.pl`](server.pl) has none: it serves plain HTTP whether
+or not a certificate exists on disk, and ignores these flags. If you have set
+HTTPS up, `./start.sh` is the one to start it with.
+
 **Where it does outrank the mode is `detect`.** With HTTPS on, if the
 certificate covers your `.local` name but not your MagicDNS name — the default
 [`gen-cert.sh`](gen-cert.sh) produces — `detect` advertises the `.local` name
@@ -745,8 +884,8 @@ pair, not after.
 
 **A guide for keeping the Accessibility grant narrow.** Instead of letting your
 Terminal hold the permission, wrap the server in an app bundle that holds it
-alone. Nothing about the code changes — the bundle runs the same `start.sh` in
-the same repo. What changes is the name in the Accessibility list, and what
+alone. Nothing about the code changes — the bundle runs the same `start.sh` (or
+`start-plain.sh`, with `--plain`) in the same repo. What changes is the name in the Accessibility list, and what
 else that name covers: nothing.
 
 [`bundle-app.sh`](bundle-app.sh) builds it for you — and **the installers run it
@@ -760,9 +899,16 @@ else:
 ./bundle-app.sh tailscale        # bake in a mode — arguments go to start.sh
 ./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
 ./bundle-app.sh --no-at-login    # don't start it at login (and undo it if set)
+./bundle-app.sh --plain          # wrap start-plain.sh — the Node-free path
 ./bundle-app.sh --quiet          # where it went, without the walkthrough
                                  #   (what the installers use)
 ```
+
+`--plain` is the only one that changes what the app runs: `start-plain.sh`
+instead of `start.sh`, so the app needs no Node.js either and skips the
+`ensure-node.sh` step this script otherwise does first. Everything else in this
+section is the same — including the login start. See
+[Run it without Node.js](#run-it-without-nodejs).
 
 It makes `DIY Remote Server.app` and puts it in the `diy-mac-remote` folder on
 your Desktop if the installers made one, and in `/Applications` if they didn't
@@ -1017,25 +1163,123 @@ messages.
 
 ## How it works
 
-Everything runs through macOS's `osascript`, in two different language modes.
+**The server runs inside `osascript -l JavaScript`.** Everything that decides
+anything — routing, the pairing, the crypto, which key to press — is in
+[`app/`](app/), and `app/` runs in a single long-lived JXA process. An
+_entrypoint_ owns the socket in front of it and nothing else:
 
-**Keypresses** use AppleScript (the default mode):
-
-```sh
-osascript -e 'tell application "System Events" to key code 36'   # Enter
+```
+                                        ┌─────────────────────────────────────┐
+ iPhone ──HTTP(S)──▶ server.js  ──┐     │ osascript -l JavaScript             │
+                    (node)        │     │   app/host-jxa.js   loader, messages │
+                                  ├────▶│   app/main.js       routing, auth   │
+ iPhone ──HTTP─────▶ server.pl  ──┘     │   app/pairing.js    secret + token  │
+                    (perl)   one JSON   │   app/sys-jxa.js    CoreGraphics    │
+                             line per   │                     keyboard, mouse │
+                             request    └─────────────────────────────────────┘
 ```
 
-The server turns each keypress op into an AppleScript `keystroke` / `key code`
-program (all of the op's actions in one `tell application` block) and runs
-`osascript` once per op.
+**Why that shape.** Typing and clicking mean posting CoreGraphics events
+(Quartz Event Services: `CGEventCreateKeyboardEvent`,
+`CGEventCreateMouseEvent`), and `osascript -l JavaScript` is the only way to
+reach those on a stock Mac without a compiler or a native module. Being *inside*
+that process makes every keystroke and every mouse move a plain function call.
+The old design paid an `osascript` launch (~100 ms) per keypress and kept a
+second long-lived helper process on a pipe just for the mouse; both are gone.
 
-**Mouse** events use JXA — JavaScript for Automation — via `osascript -l
-JavaScript`, because AppleScript has no clean way to move the cursor while JXA
-can call CoreGraphics (Quartz Event Services: `CGEventCreateMouseEvent` etc.).
-Spawning a JXA process per movement would be far too slow (~100 ms startup), so
-the server keeps **one long-lived `osascript` helper** and streams
-newline-delimited JSON commands to its stdin — fast enough to feel like a real
-trackpad. (See `mouse.js`.)
+**The keyboard takes a different road to the mouse**, and always has: AppleScript
+can type but cannot move the cursor. So `app/input.js` builds an AppleScript
+program — `keystroke "…"`, `key code N using {command down}`, `delay 0.3` — and
+`app/sys-jxa.js` compiles and runs it with **`NSAppleScript`, inside this
+process**. That is the one thing that changed: the old design launched
+`osascript` per keypress and paid ~100 ms for it; the whole batch is now one
+compiled script and no launch at all.
+
+**What `keystroke` cannot type, the clipboard can.** System Events maps each
+character back to *one* keypress on your current layout, and when it can't find
+one it does not fail — it sends key code 0, which types `a`. On a Finnish
+keyboard `é` and `ü` arrive; `õ` (option+`~`, then o) becomes `a`, and an emoji
+becomes two of them. So `app/input.js` sends ASCII through `keystroke`, which
+every Latin layout can reach, and anything else through the clipboard: set it,
+⌘V, put back what was there. That is correct for any character at all, at the
+cost of a paste (~150 ms) and a brief borrow of the clipboard — so if your
+layout does reach some of those directly, name them and they keep the fast path:
+
+```sh
+DIY_MAC_REMOTE_DIRECT_CHARS='äöåÄÖÅ' ./start.sh    # a Nordic keyboard
+```
+
+Two caveats worth knowing: only the *text* on the clipboard is saved and
+restored, so an image or styled content on it is left alone rather than
+clobbered but also not preserved; and ⌘V has to be allowed where you are typing.
+
+The obvious fix would be `CGEventKeyboardSetUnicodeString`, which posts
+characters directly and needs no layout at all. It is unreachable from JXA: it
+takes a `const UniChar *`, and the bridge refuses every way of producing one.
+[`test/unicode-probe.jxa.js`](test/unicode-probe.jxa.js) tries six of them —
+`NSMutableData` buffers, a `Uint16Array`, three `ObjC.bindFunction`
+re-declarations — and reports what each one did on your Mac. Run it if you want
+to check whether a newer macOS has opened that door; if one ever does, the
+clipboard path can go.
+
+The price of `keystroke` is the permission: it goes through System Events, so
+macOS asks for **Automation** as well as Accessibility. The mouse posts
+CoreGraphics events directly and needs only Accessibility.
+
+**The module loader.** `osascript` runs one script and has no `require()`, so
+[`app/loader.js`](app/loader.js) provides one: read the file, evaluate it with
+`new Function('exports', 'require', 'module', …)`, cache it by path. It is
+~40 lines, and it's what lets the same `app/` modules load unchanged under Node
+— which is how the test suite drives all of this on a machine that has no
+`osascript` (see [Tests](#tests)).
+
+**No crypto library, twice over.** JavaScriptCore under `osascript` has no
+`node:crypto` and no `crypto.subtle`, exactly as the plain-HTTP page in Safari
+has none. So SHA-256, HMAC, ChaCha20, base64 and UTF-8 are all hand-written in
+`app/` — the same algorithms the page inlines, pinned against each other and
+against Node's native implementations by `test/parity.test.js`.
+
+**The line protocol.** A message is `key: value` lines ended by a blank one, on
+the backend's stdin/stdout, one request at a time:
+
+```
+t: req                                   t: res
+id: 7                                    id: 7
+method: POST                             status: 200
+path: /msg                               body: {"ok":true,"n":1}
+body: {"iv":"5Nx...","ct":"Qk9..."}
+```
+
+That is the whole format. Values are percent-encoded, so a value can never
+contain a newline and a message is always plain ASCII — which matters because
+the JXA host reads whatever chunk the pipe hands it, and half a UTF-8 sequence
+decodes to nothing. A repeated key is a list (that is how a command line
+travels). There is no parser on any side: writing a message is a `sprintf`,
+reading one is a split at the first colon.
+
+**It stays that small because file bytes never cross it.** `public/` is served
+by the entrypoints, so the only bodies the backend ever handles are the JSON of
+`/nonce` and `/msg`. Duplicating the static serving is the price; a protocol
+both a shell script and a Perl one-liner can speak is what it buys.
+[`test/perl.test.js`](test/perl.test.js) holds the two implementations to the
+same answers, byte for byte, and
+[`app/protocol.js`](app/protocol.js) documents the format in full.
+
+**Neither entrypoint parses more than it must.** A request body has to arrive
+with `Content-Length` — the page always sends one, since `fetch` sets it for a
+string body — and a chunked one is refused with `411 Length Required` rather
+than decoded. A chunk decoder would be parsing code answering to anyone who can
+reach the port, in exchange for a shape the client never sends.
+
+**And the files are served from a listing, not from a path.** A request for a
+static file makes the entrypoint list `public/`, build the map of
+"URL path → the file it means", and look the request up in it. The path that
+gets opened is one the server built from what it found on disk; the client's
+path is only ever a key. So there is no traversal to defend against, no
+normalization to get subtly wrong, and no `%2e%2e` trick to try — anything that
+isn't one of those files, in exactly that spelling, is a 404. Listing per
+request costs a `readdir` of four files on a page load, and means a file dropped
+into `public/` is served immediately.
 
 ## HTTP API
 
@@ -1134,8 +1378,9 @@ attacker can start operating your keyboard and mouse. You do not want that.
    stays small; it doesn't weaken the split. Because the server keeps only the
    secret + token hash, it can't reprint the pairing key on a later start: paired
    devices just reopen the app, and to pair a new device (or recover a lost pairing)
-   you run `node server.js --reset-token`, which mints a fresh key + QR (all devices
-   re-pair; note the secret rotates with it).
+   you run `node server.js --reset-token` (or `perl server.pl --reset-token`),
+   which mints a fresh key + QR (all devices re-pair; note the secret rotates
+   with it).
    - **What this covers:** offline theft of the disk or a backup — someone who
      ends up with your files but was never on your network still can't drive the
      Mac.
@@ -1169,6 +1414,14 @@ the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
 secure context (HTTPS/localhost), which plain-HTTP LAN pages are not. So the page
 ships small, test-vector-verified **pure-JS SHA-256 and ChaCha20** (inlined in
 `index.html`), using native Web Crypto for hashing when it _is_ available.
+
+**And on the server, for the same reason.** The server runs inside
+`osascript -l JavaScript`, where there is no `node:crypto` and no
+`crypto.subtle` either — so `app/sha256.js`, `app/chacha20.js` and `app/bytes.js`
+are the same hand-written primitives. Every one of them is checked against
+Node's native implementation and against the page's copy on every test run
+([`test/parity.test.js`](test/parity.test.js)), because three implementations
+that disagree is the failure mode that matters here.
 
 **Remaining caveat:** by default this is application-layer crypto over plain
 HTTP, not TLS. It protects the _contents_ of requests, but without a trusted
@@ -1208,6 +1461,7 @@ of authenticating the page (see
   if there isn't one; see
   [Both at once](#both-at-once-tailscale--certificate).
 - `bundle-app.sh` — wraps the server in a `DIY Remote Server.app` bundle
+  (`--plain` wraps `start-plain.sh` instead, for the Node-free path)
   (Info.plist, a readable shell-script launcher pointing back at this repo, an
   icon, an ad-hoc `codesign` signature) and puts it in the Desktop
   `diy-mac-remote` folder if it exists, else in Applications — so the
@@ -1236,19 +1490,50 @@ of authenticating the page (see
   `./reset.sh certificate` mints a fresh CA + certificate (install the new CA
   on the phone once). Both confirm before resetting; a running server picks
   the reset up on its next start.
-- `server.js` — HTTP/HTTPS server, routing, auth/crypto, static files.
-- `executor.js` — turns key actions into AppleScript and runs `osascript`.
-- `mouse.js` — long-lived JXA (`osascript -l JavaScript`) helper that posts
-  CoreGraphics mouse-move / click / scroll events.
-- `keys.js` — key-code and modifier maps.
-- `chacha20.js` — pure-JS ChaCha20 (server side; an identical copy is inlined in
-  the page so both ends interoperate).
+- `start-plain.sh` — the same, without Node.js: checks that `perl` and
+  `osascript` are there (they ship with macOS), writes the same pid file, and
+  starts `server.pl`. Plain HTTP only; see
+  [Run it without Node.js](#run-it-without-nodejs).
+- `server.js` — the Node **entrypoint**: the socket, TLS, HTTP plumbing and the
+  files in `public/`. Knows nothing about nonces, secrets or keystrokes — those
+  two requests go to the backend.
+- `server.pl` — the Node-free entrypoint: the same job in core Perl, plain HTTP
+  only. No modules to install, and no parser in it: the protocol is
+  `key: value` lines.
+- `app/` — **the server itself**, run by `osascript -l JavaScript` (or by Node
+  for development and tests):
+  - `app/host-jxa.js` — the JXA host: bootstraps the loader, installs the
+    platform layer, and answers messages. Started by an entrypoint, never by
+    hand.
+  - `app/host-node.js` — the same host under Node, for development and the test
+    suite. It logs input events instead of posting them.
+  - `app/loader.js` — the `require()` that `osascript` doesn't have:
+    `new Function` over a file read, cached by path.
+  - `app/protocol.js` — the entrypoint ⇄ backend line protocol, documented in
+    full.
+  - `app/main.js` — routing, the request lifecycle, the pairing banner.
+  - `app/pairing.js` — the secret and the token: derive, mint, store, verify.
+  - `app/envelope.js` — nonces, counters, and opening the `/msg` envelope.
+  - `app/input.js` — actions to key/mouse events (and what to refuse).
+  - `app/keys.js` — the key-code and modifier maps.
+  - `app/netinfo.js` — `.local` / MagicDNS / LAN-IP detection and the address
+    that goes into the QR.
+  - `app/sys.js` — the platform interface; `app/sys-jxa.js` and
+    `app/sys-node.js` are its two implementations (files, randomness,
+    subprocesses, and the CoreGraphics keyboard + mouse).
+  - `app/sha256.js`, `app/chacha20.js`, `app/bytes.js` — the crypto and the
+    byte plumbing, hand-written because neither JavaScriptCore nor a plain-HTTP
+    page has any (an identical copy is inlined in the page so both ends
+    interoperate).
+  - `app/qr.js` — self-contained QR-code generator used to print the
+    scan-to-connect QR on startup. Fixed to Version 5 / EC level L / byte mode
+    (106 bytes max).
+  - `app/pathutil.js` — the handful of `node:path` functions the above need.
 - `public/index.html` — the mobile web keyboard (self-contained; inlines SHA-256,
   ChaCha20, HMAC, and the UI).
 - `public/manifest.webmanifest`, `public/icon-*.png` — Home-Screen app metadata.
-- `qr.js` — self-contained QR-code generator used to print the scan-to-connect
-  QR on startup. Fixed to Version 5 / EC level L / byte mode (106 bytes max).
-- `test/` — the test suite (see below). Zero dependencies, no framework.
+- `test/` — the test suite (see below). Zero dependencies, no framework, plus
+  `test/jxa-smoke.sh` for the parts that only a Mac can check.
 
 ## Tests
 
@@ -1266,12 +1551,55 @@ auditable as the code it checks. It covers the security-critical parts:
   ChaCha20 (authoritative, can't be miscopied), the RFC 8439 keystream vector, and
   the encrypt/decrypt round-trip.
 - **`parity.test.js`** — runs the page's _inlined_ SHA-256, ChaCha20, and
-  credential derivation in a sandbox and asserts they agree byte-for-byte with the
-  server, so the two copies can't silently drift apart.
+  credential derivation in a sandbox and asserts they agree byte-for-byte with
+  the backend's own copies **and** with Node's native ones. Three
+  implementations, one answer, or the phone and the Mac stop understanding each
+  other.
 - **`pairing.test.js`** — drives the real server over HTTP the way the phone does:
   master-derivation, the token second layer (valid → 200, wrong/missing → 401),
   the **"the master is never written to disk"** invariant, owner-only file perms,
   restart behaviour, and `--reset-token` rotation.
+- **`perl.test.js`** — the same pairing round-trip through
+  [`server.pl`](server.pl), plus keep-alive, a byte-for-byte PNG, and an
+  oversized body refused. The two entrypoints are meant to be
+  interchangeable; this is what says so.
+- **`loader.test.js`** — the stand-in for the Mac. It loads every `app/` module
+  the way `osascript` does — through the real
+  [`app/loader.js`](app/loader.js), `new Function` and all — under a stub host
+  that shares nothing with Node's, then mints a pairing and drives a signed
+  `/msg` through it. If something under `app/` stops being loadable that way, or
+  starts assuming Node, it fails here rather than on your Mac.
+- **`input.test.js`** — the AppleScript a key action turns into, down to the
+  exact program text: modifiers, key codes, capped delays, which characters take
+  the clipboard route, and the invariant that makes injection impossible rather
+  than unlikely — whatever the phone sends lands inside a quoted literal on
+  exactly one line, and every other line is one this project wrote.
+- **`protocol.test.js`** — the line protocol: that a value survives the trip
+  whatever it holds, and that nothing a client can send — a newline, a stray
+  percent sign, bytes that aren't text — can break the framing.
+
+What the suite _cannot_ check on a machine that isn't a Mac is the last inch —
+`osascript` actually loading `app/`, and the CoreGraphics calls in
+`app/sys-jxa.js` actually posting the events. That part needs a Mac and a look
+at the screen, so it has a script of its own:
+
+```sh
+./test/jxa-smoke.sh          # talk to the JXA backend directly, over its own
+                             # protocol: does it load, pair, and answer?
+./test/jxa-smoke.sh --type   # type and move the mouse for real — 5 seconds to
+                             # click into a scratch document first
+./test/jxa-smoke.sh --unicode  # which ways of posting literal text this Mac's
+                             # JXA bridge accepts (see How it works)
+```
+
+The first uses a throwaway `HOME`, so it mints its own pairing and leaves yours
+alone, and it **checks** what comes back rather than leaving it to the eye: the
+backend loaded, a pairing was minted, `/nonce` answered 200 with a real 256-bit
+nonce. The second is the acceptance test for the keyboard: it types ASCII,
+non-ASCII, a named key and a ⌘ shortcut, then traces a square with the pointer,
+and tells you what you should have seen. **Run both on a Mac before starting the
+server for real** — they fail with a reason attached, where the same problem
+seen from the phone is just a red box saying the nonce expired.
 
 ## License
 

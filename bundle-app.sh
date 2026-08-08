@@ -47,7 +47,8 @@
 #                                              and all it does is start ↓
 #            Resources/Scripts/main.scpt    <- the one line of AppleScript
 #            Resources/launcher.sh          <- the real launcher, readable, runs
-#                                              start.sh in THIS repo
+#                                              start.sh (or start-plain.sh)
+#                                              in THIS repo
 #            Resources/AppIcon.icns         <- built from public/icon-512.png
 #            PkgInfo
 #
@@ -100,6 +101,7 @@
 # Usage:
 #   ./bundle-app.sh                  # default server mode
 #   ./bundle-app.sh tailscale        # bake in a mode: args go to start.sh
+#   ./bundle-app.sh --plain          # the Node-free path (start-plain.sh)
 #   ./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
 #   ./bundle-app.sh --no-at-login    # don't start at login (removes it if set)
 #   ./bundle-app.sh --quiet          # say where it went, skip the walkthrough
@@ -124,6 +126,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEST=""
 QUIET=false       # --quiet: where it went and what it runs, and nothing else
 AT_LOGIN=true     # --no-at-login: skip the LaunchAgent (and remove any we made)
+PLAIN=false       # --plain: launch through start-plain.sh (no Node.js at all)
 START_ARGS=""     # shell-quoted, for pasting into the launcher
 ARGS_SHOWN=""     # the same thing, plain, for printing back to you
 
@@ -155,8 +158,13 @@ while [ "$#" -gt 0 ]; do
       AT_LOGIN=true ;;
     --no-at-login)
       AT_LOGIN=false ;;
+    --plain)
+      # Build an app for the Node-free path: the launcher runs start-plain.sh
+      # (perl + osascript) instead of start.sh (node). Plain HTTP only — see
+      # README > "Run it without Node.js".
+      PLAIN=true ;;
     -h|--help)
-      echo "Usage: ./bundle-app.sh [--dest DIR] [--no-at-login] [--quiet] [server.js arguments...]"
+      echo "Usage: ./bundle-app.sh [--dest DIR] [--no-at-login] [--quiet] [--plain] [server arguments...]"
       exit 0 ;;
     *)
       # Everything else — modes (wifi, tailscale, a URL) and server.js flags
@@ -167,11 +175,14 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-START_SH="$SCRIPT_DIR/start.sh"
+# Which launcher the app will run. Everything below refers to it by name only,
+# so the two paths differ in exactly one place.
+if $PLAIN; then START_NAME="start-plain.sh"; else START_NAME="start.sh"; fi
+START_SH="$SCRIPT_DIR/$START_NAME"
 ICON_SRC="$SCRIPT_DIR/public/icon-512.png"
 
 if [ ! -x "$START_SH" ]; then
-  echo "ERROR: expected start.sh next to this script — run this from the repo." >&2
+  echo "ERROR: expected $START_NAME next to this script — run this from the repo." >&2
   exit 1
 fi
 
@@ -217,8 +228,11 @@ APP="$DEST/$APP_NAME.app"
 
 # --- Node.js, now rather than later -------------------------------------------
 # start.sh would do this itself, but a bundled app has no terminal to print a
-# download to — so get it over with here, where you can watch it.
-"$SCRIPT_DIR/ensure-node.sh"
+# download to — so get it over with here, where you can watch it. The Node-free
+# path has nothing to fetch: perl and osascript are already on the Mac.
+if ! $PLAIN; then
+  "$SCRIPT_DIR/ensure-node.sh"
+fi
 
 # --- Build the bundle in a temp folder ----------------------------------------
 # Build it complete, then move it into place, so a half-written bundle is never
@@ -483,7 +497,7 @@ REPO_SHOWN=\$(printf '%s' "\$REPO" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g'
 # much as look at it. The check below tells those apart when it can -- but at
 # login there may be nobody to answer a permission prompt, and a refusal can
 # arrive as "there is nothing here" instead. So say the path, and name both.
-if [ ! -x "\$REPO/start.sh" ]; then
+if [ ! -x "\$REPO/$START_NAME" ]; then
   say "This app cannot see the folder it runs from:\n\n    \$REPO_SHOWN\n\nEither that folder has moved, in which case re-run ./bundle-app.sh from wherever it lives now -- or it is still there and macOS is refusing this app access to it, which is what happens when it sits inside Desktop, Documents or Downloads. Moving it to your home folder settles both."
   exit 1
 fi
@@ -496,7 +510,7 @@ fi
 # refusal would otherwise arrive as a bare "Operation not permitted" line in the
 # log. Reading one byte is the smallest way to find out for real -- and it is
 # also what makes macOS show its own permission prompt, if it means to show one.
-if ! head -c 1 "\$REPO/start.sh" >/dev/null 2>&1; then
+if ! head -c 1 "\$REPO/$START_NAME" >/dev/null 2>&1; then
   say "macOS will not let this app read the folder it runs from:\n\n    \$REPO_SHOWN\n\nThat folder is inside Desktop, Documents or Downloads -- folders apps need permission for.\n\nTwo ways to fix it, either is fine:\n\n1) Move the diy-mac-remote folder somewhere else (straight into your home folder is fine) and re-run ./bundle-app.sh there.\n\n2) Add this app to System Settings > Privacy & Security > Full Disk Access.\n\nThe first one asks macOS for nothing, so it is the one to prefer."
   exit 1
 fi
@@ -524,7 +538,7 @@ if [ ! -f "\$DIR/secret" ] || [ ! -f "\$DIR/token.hash" ]; then
   fi
   ANSWER=\$(/usr/bin/osascript \\
     -e 'try' -e 'tell me to activate' -e 'end try' \\
-    -e "display dialog \"Not paired yet, so this app will not start.\n\nRun ./start.sh in Terminal once and scan the QR code with your iPhone, then launch this app again.\n\nWhy from Terminal: pairing prints a one-time key, and this app would write it to its log file — the one place that key must never end up.\" with title \"$APP_NAME\" buttons {\"Open Terminal\", \"OK\"} default button \"Open Terminal\" with icon caution giving up after 300" \\
+    -e "display dialog \"Not paired yet, so this app will not start.\n\nRun ./$START_NAME in Terminal once and scan the QR code with your iPhone, then launch this app again.\n\nWhy from Terminal: pairing prints a one-time key, and this app would write it to its log file — the one place that key must never end up.\" with title \"$APP_NAME\" buttons {\"Open Terminal\", \"OK\"} default button \"Open Terminal\" with icon caution giving up after 300" \\
     2>/dev/null) || ANSWER=""
   case "\$ANSWER" in
     *"Open Terminal"*) /usr/bin/open -a Terminal "\$REPO" >/dev/null 2>&1 || true ;;
@@ -539,7 +553,7 @@ umask 077
 exec >>"\$LOG" 2>&1
 echo "=== \$(date) — started by $APP_NAME ==="
 
-"\$REPO/start.sh"$START_ARGS &
+"\$REPO/$START_NAME"$START_ARGS &
 SERVER_PID=\$!
 echo "\$SERVER_PID" > "\$DIR/server.pid"
 
@@ -900,7 +914,7 @@ echo
 # The short version: what it points at, whether the signature took, and the one
 # warning that outlives this script. The caller — an installer — says the rest.
 if $QUIET; then
-  echo "  it runs start.sh in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}, and it is $SIGNED"
+  echo "  it runs $START_NAME in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}, and it is $SIGNED"
   echo "  it is a wrapper, not a copy — pulling updates in this repo updates the"
   echo "  app, and moving the repo means re-running ./bundle-app.sh there."
   echo
@@ -909,7 +923,7 @@ if $QUIET; then
     echo
     echo "  Unsigned matters more than usual here: the applet is then still"
     echo "  Apple's binary rather than yours, and the Accessibility permission"
-    echo "  goes back to landing on Node."
+    echo "  goes back to landing on the entrypoint's interpreter."
   fi
   protected_folder_heads_up
   exit 0
@@ -919,9 +933,9 @@ if [ "$BUNDLE_KIND" = "applet" ]; then
   echo "  Contents/MacOS/$EXEC_NAME -> the applet: the identity macOS holds"
   echo "                               responsible, and nothing else"
   echo "  Resources/main.scpt (Scripts/) -> the one line that starts the launcher"
-  echo "  Resources/launcher.sh     -> runs start.sh in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}"
+  echo "  Resources/launcher.sh     -> runs $START_NAME in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}"
 else
-  echo "  Contents/MacOS/$EXEC_NAME -> runs start.sh in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}"
+  echo "  Contents/MacOS/$EXEC_NAME -> runs $START_NAME in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}"
 fi
 echo "  Contents/Info.plist       -> identifies it to macOS as $BUNDLE_ID"
 if $HAS_ICON; then echo "  Contents/Resources        -> the app icon"; fi
@@ -930,7 +944,7 @@ if [ "$BUNDLE_KIND" = "applet" ] && [ "$SIGNED" != "ad-hoc signed" ]; then
   echo
   echo "  ^ that matters more than usual here: unsigned, the applet is still"
   echo "    Apple's binary rather than yours, and the Accessibility permission"
-  echo "    goes back to landing on Node."
+  echo "    goes back to landing on the entrypoint's interpreter."
 fi
 echo
 echo "It is a wrapper, not a copy: it runs the code in this repo, so pulling"
@@ -938,7 +952,7 @@ echo "updates here updates the app. Re-run ./bundle-app.sh after moving the repo
 echo
 echo "To use it:"
 echo
-echo "  1) Pair first, from Terminal: ./start.sh, then scan the QR with the"
+echo "  1) Pair first, from Terminal: ./$START_NAME, then scan the QR with the"
 echo "     iPhone. The app refuses to start unpaired, because the one-time"
 echo "     pairing key must not land in a log file."
 echo
