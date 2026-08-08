@@ -88,20 +88,41 @@ while(true){
   buf += $.NSString.alloc.initWithDataEncoding(data, 4).js;  // NSUTF8StringEncoding = 4
   var parts = buf.split(NL);
   buf = parts.pop();                          // keep any partial trailing line
-  for(var i = 0; i < parts.length; i++) handle(parts[i]);
+  // One bad op must not take the daemon down: an exception thrown out of
+  // handle() escapes this loop, ends the script, and the mouse stays dead until
+  // some later command happens to respawn a helper. Log it and keep reading.
+  // (console.log goes to stderr under osascript, so the parent prefixes it.)
+  for(var i = 0; i < parts.length; i++){
+    try { handle(parts[i]); } catch(e){ console.log('op failed: ' + e.message); }
+  }
 }
 `;
 
 let helper = null;
+
+// These lines are read long after the fact, out of a log the server appends to
+// from login until shutdown — so unlike the rest of the server's output, they
+// carry the time. "The mouse died some time today" is not a diagnosis.
+function log(msg) {
+  console.error(`[mouse ${new Date().toISOString()}] ${msg}`);
+}
 
 function ensureHelper() {
   if (helper && helper.stdin && helper.stdin.writable) return helper;
   helper = spawn('osascript', ['-l', 'JavaScript', '-e', DAEMON], {
     stdio: ['pipe', 'ignore', 'pipe'],
   });
-  helper.stderr.on('data', (d) => console.error('[mouse] ' + d.toString().trim()));
-  helper.on('exit', () => { helper = null; });
-  helper.on('error', (e) => { console.error('[mouse] helper error:', e.message); helper = null; });
+  log(`helper started (pid=${helper.pid})`);
+  helper.stderr.on('data', (d) => log(d.toString().trim()));
+  // A helper that dies takes the mouse with it until the next command respawns
+  // one, and a respawn loop looks identical to "nothing happens" from the phone.
+  // Say so in the log: code/signal is the difference between a JXA exception and
+  // something killing the process.
+  helper.on('exit', (code, signal) => {
+    log(`helper exited (code=${code}, signal=${signal})`);
+    helper = null;
+  });
+  helper.on('error', (e) => { log('helper error: ' + e.message); helper = null; });
   return helper;
 }
 
@@ -115,7 +136,7 @@ function send(cmd) {
     ensureHelper().stdin.write(JSON.stringify(cmd) + '\n');
   } catch (e) {
     helper = null;
-    console.error('[mouse] write failed:', e.message);
+    log('write failed: ' + e.message);
   }
   return { ok: true };
 }
