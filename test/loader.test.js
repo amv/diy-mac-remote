@@ -49,6 +49,8 @@ function makeStubHost() {
     input: {
       keyScript: (source) => events.push({ script: source }),
       mouse: (cmd) => events.push({ mouse: cmd }),
+      mediaCommand: (command) => events.push({ media: command }),
+      keyEvent: (code, down) => events.push({ key: [code, down] }),
       sleep: (seconds) => events.push({ sleep: seconds }),
     },
   };

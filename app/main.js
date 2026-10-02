@@ -272,6 +272,7 @@ function json(status, obj) {
 //   { t:'m', k:'dn', btn:'l'|'r' }    mouse button down (hold)
 //   { t:'m', k:'up', btn:'l'|'r' }    mouse button up (release)
 //   { t:'m', k:'sc', dy }             scroll wheel
+//   { t:'s', k:<name> }               media/system control (input.js runSystem)
 function runOp(op) {
   if (!op || typeof op !== 'object') throw new Error('bad op');
   if (op.t === 'k') {
@@ -280,6 +281,7 @@ function runOp(op) {
     return input.runKeys(actions);
   }
   if (op.t === 'm') return input.runMouse(op);
+  if (op.t === 's') return input.runSystem(op);
   throw new Error('unknown op type');
 }
 

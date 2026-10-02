@@ -184,6 +184,45 @@ function mouse(c) {
   }
 }
 
+// ---- single key events -------------------------------------------------------
+//
+// One key going down or up, as its own event. AppleScript can only press and
+// release in one go, and a key that behaves differently when held — dictation
+// is push-to-talk while the key is down — needs the two halves apart, with the
+// phone deciding when the second one happens. Key codes are the part of the
+// keyboard CoreGraphics does handle through the bridge (literal text is what
+// it can't; see "typing" below).
+function keyEvent(code, down) {
+  post($.CGEventCreateKeyboardEvent($(), code, !!down));
+}
+
+// ---- media -----------------------------------------------------------------
+//
+// Play/pause, next and previous go to MediaRemote, the private framework that
+// the media keys end up calling and that routes a command to whichever app
+// owns Now Playing — Music, Spotify, a browser tab. It has no headers and no
+// BridgeSupport, so the one function needed is bound by hand. No permission is
+// involved. (macOS 15.4 started refusing parts of MediaRemote to processes that
+// aren't Apple's own; osascript is Apple's, which is what keeps this door open
+// here.)
+var MEDIA_REMOTE = '/System/Library/PrivateFrameworks/MediaRemote.framework';
+var mediaRemoteBound = false;
+
+function mediaCommand(command) {
+  if (!mediaRemoteBound) {
+    var bundle = $.NSBundle.bundleWithPath($(MEDIA_REMOTE));
+    if (isNil(bundle) || !bundle.load) {
+      throw new Error('could not load ' + MEDIA_REMOTE + ', so the media buttons cannot work');
+    }
+    // Boolean MRMediaRemoteSendCommand(MRMediaRemoteCommand, NSDictionary *)
+    ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']]);
+    mediaRemoteBound = true;
+  }
+  // The result is not checked: it is false when nothing is playing, which is a
+  // tap with nothing to do, not an error worth a red bar on the phone.
+  $.MRMediaRemoteSendCommand(command, $());
+}
+
 // ---- typing -----------------------------------------------------------------
 //
 // Keystrokes are an AppleScript program (built in app/input.js), compiled and
@@ -319,6 +358,8 @@ var sys = {
   input: {
     keyScript: runScript,
     mouse: mouse,
+    mediaCommand: mediaCommand,
+    keyEvent: keyEvent,
     sleep: function (seconds) {
       if (seconds > 0) $.NSThread.sleepForTimeInterval(seconds);
     },

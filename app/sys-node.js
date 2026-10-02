@@ -119,6 +119,12 @@ const sys = {
     mouse(cmd) {
       sys.log('[dry-run] mouse ' + JSON.stringify(cmd));
     },
+    keyEvent(code, down) {
+      sys.log('[dry-run] key ' + code + (down ? ' down' : ' up'));
+    },
+    mediaCommand(command) {
+      sys.log('[dry-run] media command ' + command);
+    },
     sleep(seconds) {
       // A synchronous sleep, because the whole application is synchronous: the
       // host handles one message at a time and a promise has nobody to await it.

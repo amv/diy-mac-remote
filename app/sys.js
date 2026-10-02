@@ -31,6 +31,9 @@
 //   lanAddresses()      -> array of non-internal IPv4 addresses
 //   input.keyScript(s)  -> run one AppleScript program of keystrokes (input.js)
 //   input.mouse(cmd)    -> post one mouse command
+//   input.mediaCommand(n) -> send one MediaRemote command (play/pause, next,
+//                          previous) to the Now Playing app — see input.js
+//   input.keyEvent(code, down) -> post one key going down or up (dictation)
 //   input.sleep(sec)    -> block for a fraction of a second
 
 var g = (typeof globalThis !== 'undefined') ? globalThis : Function('return this')();

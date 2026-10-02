@@ -16,8 +16,9 @@ const APP_DIR = path.join(__dirname, '..', 'app');
 
 // input.js requires ./sys, so give it one; nothing here runs a script.
 // `direct` becomes DIY_MAC_REMOTE_DIRECT_CHARS, the list of characters this
-// keyboard layout can reach directly.
-function loadInput(direct) {
+// keyboard layout can reach directly. `events`, if given, records what would
+// have been sent to the host.
+function loadInput(direct, events) {
   const loader = createLoader({
     readText: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } },
     exists: (p) => fs.existsSync(p),
@@ -25,7 +26,12 @@ function loadInput(direct) {
   });
   const previous = globalThis.__DIY_MAC_REMOTE_SYS__;
   globalThis.__DIY_MAC_REMOTE_SYS__ = {
-    dryRun: true, input: {}, log() {},
+    dryRun: true, log() {},
+    input: {
+      keyScript: (source) => events && events.push({ script: source }),
+      mediaCommand: (command) => events && events.push({ media: command }),
+      keyEvent: (code, down) => events && events.push({ key: [code, down] }),
+    },
     env: (name) => (name === 'DIY_MAC_REMOTE_DIRECT_CHARS' ? (direct || null) : null),
   };
   try {
@@ -161,4 +167,64 @@ test('a batch is built in full before any of it runs', () => {
   assert.throws(() => input.buildScript([{ text: 'a' }, { key: 'nope' }]), /Unknown key/);
   assert.throws(() => input.buildScript([]), /non-empty/);
   assert.throws(() => input.buildScript(['nope']), /must be an object/);
+});
+
+// The media controls are a fixed list: the phone names one, and that name is
+// all it gets to say.
+test('play/pause, next and previous are MediaRemote commands', () => {
+  const events = [];
+  const sysInput = loadInput(null, events);
+  for (const [name, command] of [['play', 2], ['next', 4], ['previous', 5]]) {
+    events.length = 0;
+    sysInput.runSystem({ t: 's', k: name });
+    assert.deepStrictEqual(events, [{ media: command }], name);
+  }
+});
+
+test('volume steps are clamped and unmute, like the keyboard', () => {
+  const events = [];
+  const sysInput = loadInput(null, events);
+  sysInput.runSystem({ t: 's', k: 'volup' });
+  sysInput.runSystem({ t: 's', k: 'voldown' });
+  sysInput.runSystem({ t: 's', k: 'mute' });
+  const [up, down, mute] = events.map((e) => e.script);
+  assert.match(up, /\(get volume settings\)\) \+ \(6\)/);
+  assert.match(down, /\(get volume settings\)\) \+ \(-6\)/);
+  for (const s of [up, down]) {
+    assert.match(s, /if diyVol < 0 then set diyVol to 0/);
+    assert.match(s, /if diyVol > 100 then set diyVol to 100/);
+    assert.match(s, /set volume without output muted$/);
+  }
+  assert.strictEqual(mute, 'set volume output muted (not (output muted of (get volume settings)))');
+});
+
+test('brightness, lock and display-off are fixed AppleScript, and nothing else is accepted', () => {
+  const events = [];
+  const sysInput = loadInput(null, events);
+  for (const k of ['brightup', 'brightdown', 'lock', 'displayoff', 'missioncontrol']) {
+    sysInput.runSystem({ t: 's', k });
+  }
+  assert.deepStrictEqual(events, [
+    { script: TELL + 'key code 144' },
+    { script: TELL + 'key code 145' },
+    { script: TELL + 'keystroke "q" using {control down, command down}' },
+    { script: 'do shell script "pmset displaysleepnow"' },
+    { script: 'do shell script "open -a \'Mission Control\'"' },
+  ]);
+  events.length = 0;
+  for (const k of ['nope', 'toString', '__proto__', 'constructor', undefined]) {
+    assert.throws(() => sysInput.runSystem({ t: 's', k }), /Unknown system control/, String(k));
+  }
+  assert.deepStrictEqual(events, []);
+});
+
+test('dictation is its key, down and up apart; Do Not Disturb is a tap of its key', () => {
+  const events = [];
+  const sysInput = loadInput(null, events);
+  sysInput.runSystem({ t: 's', k: 'dictationdown' });
+  sysInput.runSystem({ t: 's', k: 'dictationup' });
+  assert.deepStrictEqual(events, [{ key: [176, true] }, { key: [176, false] }]);
+  events.length = 0;
+  sysInput.runSystem({ t: 's', k: 'dnd' });
+  assert.deepStrictEqual(events, [{ key: [178, true] }, { key: [178, false] }]);
 });

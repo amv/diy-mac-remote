@@ -225,9 +225,100 @@ function runMouse(op) {
   return sys.dryRun ? { dryRun: true, cmd: cmd } : { ok: true };
 }
 
+// The media controls. Each op names one entry here and nothing else — the
+// phone picks from this list, it does not get to say what runs.
+//
+// The obvious way to press the top-row keys is the event the keyboard itself
+// sends: an NSSystemDefined event built with NSEvent, handed to CoreGraphics
+// through its CGEvent property. Under JXA that went out and did nothing, with
+// no error anywhere. So each control takes a route that does not depend on that
+// handoff:
+//
+//   volume      — Standard Additions' `set volume`. Runs in this process, needs
+//                 no permission, works on any output with a software volume.
+//                 No on-screen HUD; the step is 6%, close to the keyboard's 1/16.
+//   brightness  — key codes 144/145 through System Events, the keyboard's path.
+//                 Built-in display only; an external monitor needs DDC.
+//   media       — the private MediaRemote framework, which is what the media
+//                 keys end up calling: the command goes to whichever app owns
+//                 Now Playing (app/sys-jxa.js).
+//   dictation,  — the dictation (microphone) and Do Not Disturb (moon) keys of
+//   do not      Apple's newer keyboards,
+//   disturb     which reach macOS as ordinary key codes. Dictation's down and
+//                 up are posted separately (app/sys-jxa.js), so macOS tells a
+//                 tap (toggle) from a hold (push-to-talk) just as for the key.
+//   screen, Mission Control — ordinary AppleScript.
+var VOLUME_STEP = 6;
+
+function volumeStatements(delta) {
+  return [
+    'set diyVol to (output volume of (get volume settings)) + (' + delta + ')',
+    'if diyVol < 0 then set diyVol to 0',
+    'if diyVol > 100 then set diyVol to 100',
+    'set volume output volume diyVol',
+    // Like the keyboard: changing the volume unmutes.
+    'set volume without output muted',
+  ].join('\n');
+}
+
+var SYSTEM_SCRIPTS = {
+  volup: volumeStatements(VOLUME_STEP),
+  voldown: volumeStatements(-VOLUME_STEP),
+  mute: 'set volume output muted (not (output muted of (get volume settings)))',
+  brightup: TELL + 'key code 144',
+  brightdown: TELL + 'key code 145',
+  // ⌃⌘Q, the system shortcut for Lock Screen.
+  lock: TELL + 'keystroke "q" using {control down, command down}',
+  // Sleeps the displays now, the way the hot corner does; the Mac stays awake
+  // (though it locks too, if "require password after screen saver or display
+  // is turned off" is set to immediately).
+  displayoff: 'do shell script "pmset displaysleepnow"',
+  missioncontrol: 'do shell script "open -a \'Mission Control\'"',
+};
+
+// The top-row keys' codes. Not in Events.h — they are what the keys themselves
+// report — so they live here rather than in keys.js.
+var DICTATION_KEY = 176; // 0xB0, microphone
+var DND_KEY = 178;       // 0xB2, crescent moon
+
+// MRMediaRemoteSendCommand's command numbers (MRMediaRemote.h).
+var MEDIA_COMMANDS = {
+  play: 2,         // kMRTogglePlayPause
+  next: 4,         // kMRNextTrack
+  previous: 5,     // kMRPreviousTrack
+};
+
+// Execute one system op: { t:'s', k:<name> } with a name from the lists above.
+function runSystem(op) {
+  var name = String(op.k);
+  if (name === 'dictationdown' || name === 'dictationup') {
+    var key = { code: DICTATION_KEY, down: name === 'dictationdown' };
+    sys.input.keyEvent(key.code, key.down);
+    return sys.dryRun ? { dryRun: true, cmd: key } : { ok: true };
+  }
+  if (name === 'dnd') {
+    // A tap of the key: down, then up.
+    sys.input.keyEvent(DND_KEY, true);
+    sys.input.keyEvent(DND_KEY, false);
+    return sys.dryRun ? { dryRun: true, cmd: { code: DND_KEY } } : { ok: true };
+  }
+  if (Object.prototype.hasOwnProperty.call(MEDIA_COMMANDS, name)) {
+    var cmd = { media: MEDIA_COMMANDS[name] };
+    sys.input.mediaCommand(cmd.media);
+    return sys.dryRun ? { dryRun: true, cmd: cmd } : { ok: true };
+  }
+  if (Object.prototype.hasOwnProperty.call(SYSTEM_SCRIPTS, name)) {
+    var script = SYSTEM_SCRIPTS[name];
+    sys.input.keyScript(script);
+    return sys.dryRun ? { dryRun: true, script: script } : { ok: true };
+  }
+  throw new Error('Unknown system control: ' + op.k);
+}
+
 module.exports = {
   buildScript: buildScript,
   actionToStatements: actionToStatements,
   runKeys: runKeys,
   runMouse: runMouse,
+  runSystem: runSystem,
 };

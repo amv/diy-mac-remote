@@ -1,13 +1,15 @@
-# diy-mac-remote — your iPhone as a **keyboard** and **trackpad** for your Mac, built and delivered by you.
+# diy-mac-remote — your iPhone as a **keyboard**, **trackpad** and **media remote** for your Mac, built and delivered by you.
 
 <div align="center">
   <table>
     <tr>
-      <td align="center"><img src="docs/image-trackpad.png" alt="The trackpad tab running on an iPhone" width="300"></td>
-      <td align="center"><img src="docs/image-keyboard.png" alt="The keyboard tab running on an iPhone" width="300"></td>
+      <td align="center"><img src="docs/image-trackpad.png" alt="The trackpad tab running on an iPhone" width="260"></td>
+      <td align="center"><img src="docs/image-media.png" alt="The media tab running on an iPhone" width="260"></td>
+      <td align="center"><img src="docs/image-keyboard.png" alt="The keyboard tab running on an iPhone" width="260"></td>
     </tr>
     <tr>
       <td align="center"><b>The trackpad</b></td>
+      <td align="center"><b>The media tab</b></td>
       <td align="center"><b>The keyboard</b></td>
     </tr>
   </table>
@@ -147,8 +149,8 @@ directory at all. [`server.pl`](server.pl) is core-Perl-only: no CPAN, no
 modules to fetch, about 500 readable lines including its own JSON parser.
 
 **It is the same server.** Both entrypoints start the identical backend and hand
-it identical requests, so the pairing, the QR, the crypto, the keyboard and the
-trackpad are the same code either way — the tests in [`test/`](test/) drive both
+it identical requests, so the pairing, the QR, the crypto, the keyboard, the
+trackpad and the media controls are the same code either way — the tests in [`test/`](test/) drive both
 and assert they answer alike. You can switch between them freely: a phone paired
 through one works through the other, as long as the address and scheme in its
 pairing still match (see [HTTPS is not a mode](#https-is-not-a-mode)).
@@ -609,14 +611,17 @@ hand under _System Settings → Privacy & Security → Accessibility_ — switch
 whatever asked (see below for what that is).
 
 Answering that dialog is usually all there is to it. If input stays dead
-afterwards, restart the server: the keyboard and the trackpad are driven from
-one long-lived `osascript` process (see [How it works](#how-it-works)), and a
+afterwards, restart the server: the keyboard, the trackpad and the media
+controls are all driven from one long-lived `osascript` process (see [How it works](#how-it-works)), and a
 process that started before you granted the permission keeps running without it.
 
 > **A second dialog asks to control _System Events_.** That one is the keyboard:
 > keystrokes go through AppleScript, which is what lets any character be typed
-> on any layout (see [How it works](#how-it-works)). Saying yes makes the
-> keyboard work; saying no leaves you with a working trackpad and nothing typed.
+> on any layout (see [How it works](#how-it-works)). The Media tab's navigation
+> pad, Spotlight, brightness and Lock buttons are keystrokes too. Saying yes makes
+> all of those work; saying no leaves you with a working trackpad, the
+> volume, media, Do Not Disturb, dictation and display-off buttons, and nothing
+> typed.
 > It lives in _System Settings → Privacy & Security → **Automation**_, separately
 > from Accessibility.
 
@@ -1121,29 +1126,6 @@ script running your Node.js, not an App Store app with entitlements. What it
 buys you is that the switch in System Settings means "this server" instead of
 "anything I ever run in a terminal".
 
-## The keyboard
-
-The Keyboard tab pairs your phone's **own native keyboard** with a bar of the
-special keys a phone keyboard lacks.
-
-- **Type with the native keyboard.** Tap the capture field and your phone's
-  keyboard pops up below; whatever you type — letters, numbers, symbols, **å ä ö**,
-  emoji, swipe-typed words, predictive suggestions — is sent straight to the Mac.
-  This means your own layout, languages, and autocomplete, instead of a fixed
-  on-screen grid. (Soft keyboards don't emit reliable key events, so the app reads
-  the field's edit events instead and forwards each one as a keystroke.)
-- **A special-keys bar sits above it**: ⎋ esc, ⇥ tab, the modifiers (⌘ ⌥ ⌃ ⇧),
-  and a navigation row (⌫ backspace, ⌦ forward-delete, ← ↑ ↓ →, ⏎ return). These
-  stay visible above the native keyboard and don't dismiss it when tapped.
-- **Modifier** keys (⌘ ⌥ ⌃ ⇧) **latch**: tap one and it stays held (highlighted
-  gold) until you tap it again. While held they combine with what you type next on
-  the native keyboard, so you can build combos and selections:
-  - tap **⌘**, then press **S** → Cmd-S (⌘ stays held — tap it again to release).
-  - hold **⇧** then tap **→** repeatedly to extend a selection.
-  - hold **⌘** and **⇧** together, then press **T** → Cmd-Shift-T.
-- Backspace, return, and the native "delete word" gesture are all forwarded; the
-  native keyboard's own shift/caps handles letter case.
-
 ## The trackpad
 
 The app opens on the **Mouse** tab. It's a remote trackpad:
@@ -1155,11 +1137,67 @@ The app opens on the **Mouse** tab. It's a remote trackpad:
   **press-and-hold**: the button stays down while you hold it, so you can hold a
   button and drag on the trackpad with another finger to drag-and-drop, then
   release to drop.
+- A **Mission Control** button under them opens Mission Control (Esc, or a
+  click, closes it). It needs no permission: it's `open -a "Mission Control"`.
 - A **sensitivity** slider at the top scales pointer speed (0.5–6×, default 2.5).
 
 Moves and scrolls are coalesced client-side and sent on the same ~50 ms grid as
 keystrokes, so a drag becomes a few summed deltas rather than a flood of
 messages.
+
+## The media tab
+
+The middle **Media** tab is a TV-remote-style panel, top to bottom:
+
+- **previous / play-pause / next**, which go through macOS's MediaRemote to
+  whichever app owns Now Playing (Music, Spotify, a browser tab…).
+- **Navigation**: a 3×3 pad of ⇤ Tab (shift-tab), ↑, Tab ⇥, ←, **OK** (return),
+  →, Esc, ↓, Space — enough to drive a slideshow, a video player, or a dialog
+  from the couch. Modifiers latched on the Keyboard tab don't apply here.
+- **Volume** − / mute / + (AppleScript's `set volume`, in steps of 6% —
+  no on-screen HUD).
+- **Do Not Disturb**, **Spotlight** (⌘Space) and **Dictation**. Do Not Disturb
+  and Dictation press the moon and microphone keys of Apple's newer keyboards.
+  Tap Dictation to start and stop it, or **hold** it to talk and let go to stop.
+  Dictation must be turned on in _System Settings → Keyboard_, with its shortcut
+  left on the microphone key.
+- **Brightness** − / + (the brightness key codes, built-in display only — an
+  external monitor needs DDC, which this project doesn't reach).
+- **Display off** (`pmset displaysleepnow` — the displays sleep, the Mac stays
+  awake; it also locks if your Mac asks for the password immediately after the
+  display turns off) and **Lock** (⌃⌘Q — locks, display stays on).
+- Volume, brightness and the arrow keys **repeat while held**.
+
+Nothing here needs a permission the rest of the app doesn't already have: the
+navigation pad, brightness, Spotlight and Lock go through System Events like the
+keyboard, the moon and microphone keys go through CoreGraphics like the mouse,
+and volume, the media buttons and Display off need no permission at all. How
+each one is sent: [How it works](#how-it-works).
+
+## The keyboard
+
+The Keyboard tab pairs your phone's **own native keyboard** with a bar of the
+special keys a phone keyboard lacks.
+
+- **Type with the native keyboard.** Tap the capture field and your phone's
+  keyboard pops up below; whatever you type — letters, numbers, symbols, **å ä ö**,
+  emoji, swipe-typed words, predictive suggestions — is sent straight to the Mac.
+  This means your own layout, languages, and autocomplete, instead of a fixed
+  on-screen grid. (Soft keyboards don't emit reliable key events, so the app reads
+  the field's edit events instead and forwards each one as a keystroke.)
+- **A special-keys bar sits above it**: on the left ⎋ esc, ⇥ tab, ⌫ backspace
+  and the modifiers (⌘ ⌥ ⌃ ⇧); on the right the Mac's navigation cluster — 🌐,
+  Home, PgUp, ⌦ forward-delete, End, PgDn — over the arrow keys in an inverted
+  T. These stay visible above the native keyboard and don't dismiss it when
+  tapped. (Return is the native keyboard's own.)
+- **Modifier** keys (⌘ ⌥ ⌃ ⇧) **latch**: tap one and it stays held (highlighted
+  gold) until you tap it again. While held they combine with what you type next on
+  the native keyboard, so you can build combos and selections:
+  - tap **⌘**, then press **S** → Cmd-S (⌘ stays held — tap it again to release).
+  - hold **⇧** then tap **→** repeatedly to extend a selection.
+  - hold **⌘** and **⇧** together, then press **T** → Cmd-Shift-T.
+- Backspace, return, and the native "delete word" gesture are all forwarded; the
+  native keyboard's own shift/caps handles letter case.
 
 ## How it works
 
@@ -1226,6 +1264,29 @@ The price of `keystroke` is the permission: it goes through System Events, so
 macOS asks for **Automation** as well as Accessibility. The mouse posts
 CoreGraphics events directly and needs only Accessibility.
 
+**The media controls are a fixed list, not a command line.** The Media tab sends
+an op naming one control — `volup`, `play`, `lock`, … — and
+[`app/input.js`](app/input.js) maps that name to what runs; anything not on the
+list is refused. What runs depends on the control, because the keys on a Mac
+keyboard's top row reach macOS in different ways:
+
+- **Volume** is AppleScript's own `set volume`, run in the same `NSAppleScript`
+  as the keystrokes but needing no System Events.
+- **Play/pause, next and previous** go to MediaRemote, the private framework
+  the media keys end up calling, bound with `ObjC.bindFunction`. It routes the
+  command to whichever app owns Now Playing.
+- **Brightness** is key codes 144/145 through System Events, and **Do Not
+  Disturb** and **dictation** are key codes 178 and 176 — what the moon and
+  microphone keys report — posted as separate down and up CoreGraphics events,
+  so holding the dictation button is push-to-talk exactly as holding the key is.
+- **Lock**, **Display off** and **Mission Control** are one line of AppleScript
+  each: ⌃⌘Q, `pmset displaysleepnow`, `open -a "Mission Control"`.
+
+The obvious single route would have been the event the keyboard itself sends for
+those keys — an `NSSystemDefined` event built with `NSEvent` and posted through
+its `CGEvent` property. Under JXA that goes out and does nothing, with no error
+anywhere, which is why none of the controls above depend on it.
+
 **The module loader.** `osascript` runs one script and has no `require()`, so
 [`app/loader.js`](app/loader.js) provides one: read the file, evaluate it with
 `new Function('exports', 'require', 'module', …)`, cache it by path. It is
@@ -1283,12 +1344,12 @@ into `public/` is served immediately.
 
 ## HTTP API
 
-- `GET /` — the keyboard web app. (public)
+- `GET /` — the web app. (public)
 - `GET /nonce` — issue a fresh nonce `{ nonce, ttlMs }`. (public)
 - `POST /msg` — the single **authenticated + encrypted** action endpoint. Body is
   an envelope `{ iv, ct, mac }` (see below).
 
-There is one action endpoint; the operation (keypress vs. mouse) lives in the
+There is one action endpoint; the operation (keypress, mouse, or media control) lives in the
 _encrypted_ payload, so the URL never reveals what you sent.
 
 ### The `/msg` envelope
@@ -1305,6 +1366,10 @@ op        = { "t":"k", "b": <action obj/array> }   // a keypress
           | { "t":"m", "k":"dn", "btn":"l"|"r" }        // mouse button down (hold)
           | { "t":"m", "k":"up", "btn":"l"|"r" }        // mouse button up (release)
           | { "t":"m", "k":"sc", "dy":<n> }             // scroll wheel
+          | { "t":"s", "k":<name> }                     // media/system control:
+            // volup voldown mute brightup brightdown play next previous
+            // dnd dictation lock displayoff missioncontrol
+            // (a fixed list — see app/input.js)
 
 pad(x)  = x + spaces, to a multiple of 256 bytes (JSON.parse ignores the spaces)
 encKey  = SHA256("diy-mac-remote-enc:" + secret)
@@ -1514,13 +1579,14 @@ of authenticating the page (see
   - `app/main.js` — routing, the request lifecycle, the pairing banner.
   - `app/pairing.js` — the secret and the token: derive, mint, store, verify.
   - `app/envelope.js` — nonces, counters, and opening the `/msg` envelope.
-  - `app/input.js` — actions to key/mouse events (and what to refuse).
+  - `app/input.js` — key, mouse and media-control ops to events (and what to
+    refuse).
   - `app/keys.js` — the key-code and modifier maps.
   - `app/netinfo.js` — `.local` / MagicDNS / LAN-IP detection and the address
     that goes into the QR.
   - `app/sys.js` — the platform interface; `app/sys-jxa.js` and
     `app/sys-node.js` are its two implementations (files, randomness,
-    subprocesses, and the CoreGraphics keyboard + mouse).
+    subprocesses, and the CoreGraphics keyboard, mouse and media keys).
   - `app/sha256.js`, `app/chacha20.js`, `app/bytes.js` — the crypto and the
     byte plumbing, hand-written because neither JavaScriptCore nor a plain-HTTP
     page has any (an identical copy is inlined in the page so both ends
@@ -1529,9 +1595,10 @@ of authenticating the page (see
     scan-to-connect QR on startup. Fixed to Version 5 / EC level L / byte mode
     (106 bytes max).
   - `app/pathutil.js` — the handful of `node:path` functions the above need.
-- `public/index.html` — the mobile web keyboard (self-contained; inlines SHA-256,
-  ChaCha20, HMAC, and the UI).
+- `public/index.html` — the mobile web app: the Mouse, Media and Keyboard tabs
+  (self-contained; inlines SHA-256, ChaCha20, HMAC, and the UI).
 - `public/manifest.webmanifest`, `public/icon-*.png` — Home-Screen app metadata.
+- `docs/` — the screenshots at the top of this README.
 - `test/` — the test suite (see below). Zero dependencies, no framework, plus
   `test/jxa-smoke.sh` for the parts that only a Mac can check.
 
@@ -1573,7 +1640,8 @@ auditable as the code it checks. It covers the security-critical parts:
   exact program text: modifiers, key codes, capped delays, which characters take
   the clipboard route, and the invariant that makes injection impossible rather
   than unlikely — whatever the phone sends lands inside a quoted literal on
-  exactly one line, and every other line is one this project wrote.
+  exactly one line, and every other line is one this project wrote. Also what
+  each media control turns into, and that a name not on the list runs nothing.
 - **`protocol.test.js`** — the line protocol: that a value survives the trip
   whatever it holds, and that nothing a client can send — a newline, a stray
   percent sign, bytes that aren't text — can break the framing.
