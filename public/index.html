@@ -347,6 +347,8 @@
     background: var(--key-special); color: var(--text); font-size: 16px;
   }
   .mouse-bottom button:active { background: var(--key-active); }
+  /* mission control: a small square, left-aligned under the clicks */
+  .mouse-bottom #btn-mc { flex: none; width: 64px; height: 64px; font-size: 18px; }
 
   /* ---- media tab: rows of large buttons, a little extra space between groups ---- */
   #view-media { padding-top: 10px; }
@@ -413,7 +415,7 @@
     <button id="btn-right" type="button">Right click</button>
   </div>
   <div class="mouse-bottom">
-    <button id="btn-mc" type="button">Mission Control</button>
+    <button id="btn-mc" type="button" aria-label="Mission Control">mc</button>
   </div>
 </div>
 <div id="view-media" class="view hidden">
