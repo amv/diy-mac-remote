@@ -48,6 +48,8 @@ test('perl entrypoint: pairs, serves /nonce, and accepts a signed /msg', async (
   try {
     const master = pairMaster(s.out());
     assert.ok(master, 'no pairing QR from the perl entrypoint:\n' + s.out());
+    // The Node-free path builds its app with --plain, and the banner says so.
+    assert.match(s.out(), /or build it: \.\/bundle-app\.sh --plain\)/, s.out());
     const creds = deriveCreds(master);
     // The pairing landed in the same place, in the same format, with the same perms.
     const dir = path.join(home, '.diy-mac-remote');

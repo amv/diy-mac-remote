@@ -11,7 +11,7 @@
 # permission is your Terminal — so the switch you flip in System Settings says
 # "Terminal", and from then on *anything* you run from a terminal inherits that
 # right. A bundled app has its own entry, so the permission covers this server
-# and nothing else. (See README > Accessibility permissions for the server.)
+# and nothing else. (See docs/app-bundle.md.)
 #
 # Why there is an "applet" in here
 # --------------------------------
@@ -60,7 +60,10 @@
 #      here, not just a nicety: it is also what keeps the permission you grant
 #      attached to a stable identity.
 #   4) Moves it to the `diy-mac-remote` folder on your Desktop if that folder
-#      exists (the one the installers create), else to /Applications.
+#      exists (the one the installers create), else to /Applications. If it
+#      replaces an earlier build that differs from it, that one is stopped
+#      first if it is running, and the app's permissions are reset so macOS
+#      asks for them again — see "Permissions the old build held" below.
 #   5) Registers it to start when you log in — see below. Pass --no-at-login to
 #      skip that, or to undo it later.
 #
@@ -105,6 +108,8 @@
 #   ./bundle-app.sh --dest ~/Apps    # put the bundle somewhere specific
 #   ./bundle-app.sh --no-at-login    # don't start at login (removes it if set)
 #   ./bundle-app.sh --quiet          # say where it went, skip the walkthrough
+#   ./bundle-app.sh --check-location # could the app run from here? builds
+#                                    #   nothing (the installers ask first)
 #
 # Re-running is safe: it replaces the bundle it made last time.
 #
@@ -127,6 +132,8 @@ DEST=""
 QUIET=false       # --quiet: where it went and what it runs, and nothing else
 AT_LOGIN=true     # --no-at-login: skip the LaunchAgent (and remove any we made)
 PLAIN=false       # --plain: launch through start-plain.sh (no Node.js at all)
+CHECK_LOCATION=false  # --check-location: only ask whether the app could run
+                      # from where this repo is, and build nothing
 START_ARGS=""     # shell-quoted, for pasting into the launcher
 ARGS_SHOWN=""     # the same thing, plain, for printing back to you
 
@@ -161,10 +168,14 @@ while [ "$#" -gt 0 ]; do
     --plain)
       # Build an app for the Node-free path: the launcher runs start-plain.sh
       # (perl + osascript) instead of start.sh (node). Plain HTTP only — see
-      # README > "Run it without Node.js".
+      # docs/setup-options.md > "Run it without Node.js".
       PLAIN=true ;;
+    --check-location)
+      # For the installers, before they change anything — see "Will the app
+      # be allowed to read this repo?" below.
+      CHECK_LOCATION=true ;;
     -h|--help)
-      echo "Usage: ./bundle-app.sh [--dest DIR] [--no-at-login] [--quiet] [--plain] [server arguments...]"
+      echo "Usage: ./bundle-app.sh [--dest DIR] [--no-at-login] [--quiet] [--plain] [--check-location] [server arguments...]"
       exit 0 ;;
     *)
       # Everything else — modes (wifi, tailscale, a URL) and server.js flags
@@ -199,6 +210,46 @@ case "$SCRIPT_DIR/" in
   "$HOME/Documents/"*) PROTECTED_IN="Documents" ;;
   "$HOME/Downloads/"*) PROTECTED_IN="Downloads" ;;
 esac
+
+# --check-location asks only that, and builds nothing. The installers ask it
+# before they change anything: a repo in one of those folders is far cheaper to
+# catch now than after a certificate, a Desktop folder and an app have been made
+# around it — all pointing at the old place once the folder moves.
+# DIY_MAC_REMOTE_ALLOW_PROTECTED_FOLDER=1 says you know, and will give the app
+# Full Disk Access instead.
+if $CHECK_LOCATION; then
+  if [ -z "$PROTECTED_IN" ] || [ "${DIY_MAC_REMOTE_ALLOW_PROTECTED_FOLDER:-}" = "1" ]; then
+    exit 0
+  fi
+  # Where to suggest moving it: ~/diy-mac-remote, unless that is taken.
+  MOVE_TO="$HOME/diy-mac-remote"
+  if [ -e "$MOVE_TO" ]; then MOVE_TO="$HOME/$(basename "$SCRIPT_DIR")"; fi
+  {
+    echo "This repo is in your $PROTECTED_IN folder:"
+    echo
+    echo "    $SCRIPT_DIR"
+    echo
+    echo "  macOS keeps apps out of Desktop, Documents and Downloads until you let"
+    echo "  each one in, and $APP_NAME.app — which is what runs the server"
+    echo "  day to day — has an identity of its own: your Terminal being let in"
+    echo "  does not carry over to it, so it would be refused at launch."
+    echo
+    if [ -e "$MOVE_TO" ]; then
+      echo "  Move the folder into your home folder first, under a name that is"
+      echo "  not taken yet."
+    else
+      echo "  Move the folder into your home folder first:"
+      echo
+      echo "    mv $(shquote "$SCRIPT_DIR") $(shquote "$MOVE_TO")"
+      echo "    cd $(shquote "$MOVE_TO")"
+    fi
+    echo
+    echo "  (Or leave it here, and give the app Full Disk Access instead — a much"
+    echo "  wider grant: put DIY_MAC_REMOTE_ALLOW_PROTECTED_FOLDER=1 in front of"
+    echo "  the command.)"
+  } >&2
+  exit 1
+fi
 
 # --- Where does it go? --------------------------------------------------------
 # The installers (setup-https.sh / install-tailscale.sh) create a
@@ -329,6 +380,14 @@ fi
 # (replacing it wholesale is what produced a "Press Run to run this script"
 # window), and so we patch that one instead — see below. This copy is for the
 # shell-script fallback, which has no plist of its own.
+#
+# NSAppleEventsUsageDescription is the line macOS shows when the keyboard first
+# asks to control System Events. An applet arrives with a generic "This script
+# needs to control other applications to run" there, which tells you nothing
+# about what you are allowing; this says what. (No quotes or apostrophes in it:
+# PlistBuddy reads the value below from a command line of its own.)
+APPLE_EVENTS_WHY="$APP_NAME types for the Keyboard tab through System Events, and presses the navigation pad, Spotlight, brightness and Lock buttons of the Media tab the same way. Without this, the trackpad and the other media buttons still work, but nothing is typed."
+
 write_our_plist() {
 cat > "$1" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -372,6 +431,8 @@ cat > "$1" <<PLIST
 	<string>$APP_NAME runs the diy-mac-remote server from the folder you built it from. It needs this only because that folder is in Documents — move the folder elsewhere and it never asks.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>$APP_NAME runs the diy-mac-remote server from the folder you built it from. It needs this only because that folder is in Downloads — move the folder elsewhere and it never asks.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>$APPLE_EVENTS_WHY</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>diy-mac-remote — MIT licensed, built on your own Mac</string>
 </dict>
@@ -403,6 +464,7 @@ if [ "$BUNDLE_KIND" = "applet" ] && [ -x "$PB" ]; then
   plist_set NSDesktopFolderUsageDescription   string "$APP_NAME runs the diy-mac-remote server from the folder you built it from. It needs this only because that folder is on your Desktop — move the folder elsewhere and it never asks."
   plist_set NSDocumentsFolderUsageDescription string "$APP_NAME runs the diy-mac-remote server from the folder you built it from. It needs this only because that folder is in Documents — move the folder elsewhere and it never asks."
   plist_set NSDownloadsFolderUsageDescription string "$APP_NAME runs the diy-mac-remote server from the folder you built it from. It needs this only because that folder is in Downloads — move the folder elsewhere and it never asks."
+  plist_set NSAppleEventsUsageDescription     string "$APPLE_EVENTS_WHY"
 
   # osacompile's plist also carries CFBundleIconName, which points into an asset
   # catalog rather than at a file — and macOS reads it *before* CFBundleIconFile.
@@ -498,7 +560,7 @@ REPO_SHOWN=\$(printf '%s' "\$REPO" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g'
 # login there may be nobody to answer a permission prompt, and a refusal can
 # arrive as "there is nothing here" instead. So say the path, and name both.
 if [ ! -x "\$REPO/$START_NAME" ]; then
-  say "This app cannot see the folder it runs from:\n\n    \$REPO_SHOWN\n\nEither that folder has moved, in which case re-run ./bundle-app.sh from wherever it lives now -- or it is still there and macOS is refusing this app access to it, which is what happens when it sits inside Desktop, Documents or Downloads. Moving it to your home folder settles both."
+  say "This app cannot see the folder it runs from:\n\n    \$REPO_SHOWN\n\nEither that folder has moved, in which case re-run the installer you used (or ./bundle-app.sh) from wherever it lives now -- or it is still there and macOS is refusing this app access to it, which is what happens when it sits inside Desktop, Documents or Downloads. Moving it to your home folder settles both."
   exit 1
 fi
 
@@ -511,7 +573,7 @@ fi
 # log. Reading one byte is the smallest way to find out for real -- and it is
 # also what makes macOS show its own permission prompt, if it means to show one.
 if ! head -c 1 "\$REPO/$START_NAME" >/dev/null 2>&1; then
-  say "macOS will not let this app read the folder it runs from:\n\n    \$REPO_SHOWN\n\nThat folder is inside Desktop, Documents or Downloads -- folders apps need permission for.\n\nTwo ways to fix it, either is fine:\n\n1) Move the diy-mac-remote folder somewhere else (straight into your home folder is fine) and re-run ./bundle-app.sh there.\n\n2) Add this app to System Settings > Privacy & Security > Full Disk Access.\n\nThe first one asks macOS for nothing, so it is the one to prefer."
+  say "macOS will not let this app read the folder it runs from:\n\n    \$REPO_SHOWN\n\nThat folder is inside Desktop, Documents or Downloads -- folders apps need permission for.\n\nTwo ways to fix it, either is fine:\n\n1) Move the diy-mac-remote folder somewhere else (straight into your home folder is fine) and re-run the installer you used (or ./bundle-app.sh) there.\n\n2) Add this app to System Settings > Privacy & Security > Full Disk Access.\n\nThe first one asks macOS for nothing, so it is the one to prefer."
   exit 1
 fi
 
@@ -735,8 +797,10 @@ fi
 # An ad-hoc signature (`-s -`) involves no certificate, no account, no Apple:
 # it just hashes the bundle's own contents. macOS uses it to recognise the app
 # as the same app next time, so the Accessibility permission you grant is not
-# forgotten. Unsigned works too — macOS then identifies the app by path, and
-# moving it can cost you the permission.
+# forgotten — for as long as those contents stay the same (see "Permissions the
+# old build held" below for a rebuild that changes them). Unsigned works too —
+# macOS then identifies the app by path, and moving it can cost you the
+# permission.
 SIGNED="not signed (codesign unavailable)"
 if command -v codesign >/dev/null 2>&1; then
   if codesign --force --sign - --identifier "$BUNDLE_ID" \
@@ -748,10 +812,58 @@ if command -v codesign >/dev/null 2>&1; then
 fi
 
 # --- Move it into place -------------------------------------------------------
+# The CDHash of a signed bundle: for an ad-hoc signature, the whole of the
+# app's identity to macOS, and what its permissions are pinned to. Empty when
+# there is no signature to read.
+cdhash_of() {
+  command -v codesign >/dev/null 2>&1 || return 0
+  codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p' | head -n 1
+}
+
+# The pids of running processes whose command line contains $1 — as a plain
+# string, since a folder name may hold characters a pattern would read as its own.
+pids_matching() {
+  ps -axo pid=,command= 2>/dev/null |
+    NEEDLE="$1" awk 'index($0, ENVIRON["NEEDLE"]) { print $1 }'
+}
+
+# Replacing a running app with a build that differs from it breaks that copy:
+# macOS can no longer match it to anything on disk, so its permissions stop
+# applying — and LaunchServices still counts it as running, so double-clicking
+# the new app only brings the old one forward. So stop it first. Its launcher
+# passes a TERM on to the server (that is what its trap is for), takes the menu
+# bar item down and exits, and the applet quits behind it; whatever is still
+# running from the bundle after that gets a TERM of its own. Returns 1 if there
+# was nothing running to stop.
+stop_running_app() {
+  [ -n "$(pids_matching "$APP/Contents/")" ] || return 1
+  for pid in $(pids_matching "$APP/Contents/Resources/launcher.sh") \
+             $(pids_matching "$APP/Contents/MacOS/$EXEC_NAME"); do
+    kill "$pid" 2>/dev/null || true
+  done
+  waited=0
+  while [ -n "$(pids_matching "$APP/Contents/")" ] && [ "$waited" -lt 10 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  for pid in $(pids_matching "$APP/Contents/"); do
+    kill "$pid" 2>/dev/null || true
+  done
+  return 0
+}
+
+NEW_CDHASH=$(cdhash_of "$STAGE/$APP_NAME.app")
+OLD_CDHASH=""
+STOPPED_APP=false
+
 # Only ever replace a bundle this script made: check for our own launcher
 # before removing anything.
 if [ -e "$APP" ]; then
   if [ -f "$APP/Contents/MacOS/$EXEC_NAME" ]; then
+    OLD_CDHASH=$(cdhash_of "$APP")
+    if [ "$NEW_CDHASH" != "$OLD_CDHASH" ] && stop_running_app; then
+      STOPPED_APP=true
+    fi
     rm -rf "$APP"
   else
     echo "ERROR: $APP exists and was not made by this script — refusing to" >&2
@@ -770,6 +882,29 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 # The icon cache is keyed on the bundle's modification date as well, and this
 # bundle keeps the same path every time. Bump it so a changed icon is noticed.
 touch "$APP" 2>/dev/null || true
+
+# --- Permissions the old build held -------------------------------------------
+# macOS pins what it grants this app — Accessibility, control of System Events,
+# Full Disk Access if you gave it that — to the signature above, which is a hash
+# of the bundle's contents. A rebuild that changes them (a moved repo, another
+# mode, a changed launcher) is a different app to macOS: the switches in System
+# Settings stay on, but no longer apply, and the remote loads and does nothing
+# — or the keyboard says AppleScript refused. So when the signature has changed,
+# forget the old grants, and macOS asks afresh the first time the remote is
+# used. A rebuild that comes out identical keeps them. With no earlier build
+# here there may still be grants left by one that was deleted; they go the same
+# way, but there is nothing to tell anyone about.
+PERMS_STATE=""   # reset: an earlier, different build's grants were cleared
+                 # failed: they needed clearing, and tccutil would not
+if [ -n "$NEW_CDHASH" ] && [ "$NEW_CDHASH" != "$OLD_CDHASH" ] \
+   && command -v tccutil >/dev/null 2>&1; then
+  if tccutil reset All "$BUNDLE_ID" >/dev/null 2>&1; then
+    PERMS_STATE="reset"
+  else
+    PERMS_STATE="failed"
+  fi
+  [ -n "$OLD_CDHASH" ] || PERMS_STATE=""
+fi
 
 # --- Start it at login --------------------------------------------------------
 # See "Starting it at login" at the top for why this is a LaunchAgent and not a
@@ -883,7 +1018,8 @@ protected_folder_heads_up() {
   echo "  the fix is either:"
   echo
   echo "    - move the repo out of $PROTECTED_IN (your home folder is fine) and"
-  echo "      re-run ./bundle-app.sh from there — this asks macOS for nothing, or"
+  echo "      re-run the installer you used from there (or ./bundle-app.sh, if"
+  echo "      you built the app on its own) — this asks macOS for nothing, or"
   echo "    - add the app to System Settings > Privacy & Security >"
   echo "      Full Disk Access."
 }
@@ -906,6 +1042,36 @@ at_login_note() {
   esac
 }
 
+# What this rebuild did to the copy that was already there — said in both
+# summaries, because without it the next use of the remote looks like it broke
+# for no reason.
+rebuild_note() {
+  if $STOPPED_APP; then
+    echo
+    echo "  The app it replaces was running, so its server has been stopped."
+    echo "  Start $APP_NAME again when you want the remote."
+  fi
+  case "$PERMS_STATE" in
+    reset)
+      echo
+      echo "  This build differs from the one it replaces, and macOS ties the"
+      echo "  app's permissions to its exact contents — so they have been reset,"
+      echo "  rather than left switched on but no longer applying. The first time"
+      echo "  you use the remote, macOS asks again: Accessibility for the trackpad"
+      echo "  (click Open System Settings, not Deny, and switch the app on) and"
+      echo "  control of System Events for the keyboard (Allow). Then stop the"
+      echo "  server and start the app once more." ;;
+    failed)
+      echo
+      echo "  This build differs from the one it replaces, and macOS ties the"
+      echo "  app's permissions to its exact contents: their switches stay on, but"
+      echo "  they no longer apply. Resetting them did not work from here, so run"
+      echo "  this, then allow them again the first time you use the remote:"
+      echo
+      echo "    tccutil reset All $BUNDLE_ID" ;;
+  esac
+}
+
 echo
 echo "Built $APP_NAME.app and put it in $WHERE:"
 echo
@@ -916,7 +1082,8 @@ echo
 if $QUIET; then
   echo "  it runs $START_NAME in $SCRIPT_DIR${ARGS_SHOWN:+ (mode:$ARGS_SHOWN)}, and it is $SIGNED"
   echo "  it is a wrapper, not a copy — pulling updates in this repo updates the"
-  echo "  app, and moving the repo means re-running ./bundle-app.sh there."
+  echo "  app, and moving the repo means re-running the installer (or"
+  echo "  ./bundle-app.sh) from there."
   echo
   at_login_note
   if [ "$BUNDLE_KIND" = "applet" ] && [ "$SIGNED" != "ad-hoc signed" ]; then
@@ -925,6 +1092,7 @@ if $QUIET; then
     echo "  Apple's binary rather than yours, and the Accessibility permission"
     echo "  goes back to landing on the entrypoint's interpreter."
   fi
+  rebuild_note
   protected_folder_heads_up
   exit 0
 fi
@@ -948,7 +1116,9 @@ if [ "$BUNDLE_KIND" = "applet" ] && [ "$SIGNED" != "ad-hoc signed" ]; then
 fi
 echo
 echo "It is a wrapper, not a copy: it runs the code in this repo, so pulling"
-echo "updates here updates the app. Re-run ./bundle-app.sh after moving the repo."
+echo "updates here updates the app. After moving the repo, re-run this script"
+echo "there — or the installer you used, which re-points the Desktop folder's"
+echo ".command files as well."
 echo
 echo "To use it:"
 echo
@@ -959,16 +1129,16 @@ echo
 echo "  2) Double-click the app. It runs in the background — no Dock icon, no"
 echo "     window — and logs to ~/.diy-mac-remote/server.log."
 echo
-echo "  3) The first time it types for you, macOS asks for Accessibility."
-echo "     Grant it and you are done. (If the trackpad alone stays dead, stop"
-echo "     and start the server: it drives the mouse through one long-lived"
-echo "     helper, which keeps running without the permission it started"
-echo "     without.)"
+echo "  3) The first time you use the remote, macOS asks for two permissions."
+echo "     Accessibility, for the trackpad: its dialog cannot grant it, so"
+echo "     click Open System Settings (not the highlighted Deny) and switch"
+echo "     '$APP_NAME' on. Control of System Events, for the keyboard: Allow."
+echo "     Then stop the server and start the app once more — a server keeps"
+echo "     running without any permission granted after it started."
 echo
-echo "     Then check System Settings > Privacy & Security > Accessibility:"
-echo "     the switch should say '$APP_NAME'. If your Terminal is switched on"
-echo "     there from earlier runs, turn it off — that entry lets anything you"
-echo "     run from a terminal drive your Mac."
+echo "     While you are in that Accessibility list: if your Terminal is"
+echo "     switched on there from earlier runs, turn it off — that entry lets"
+echo "     anything you run from a terminal drive your Mac."
 echo
 echo "  4) To stop it: double-click stop.command in the Desktop diy-mac-remote"
 echo "     folder, or run ./stop.sh here."
@@ -1001,4 +1171,5 @@ case "$AT_LOGIN_STATE" in
     echo "     none to remove). Drop that flag and it will." ;;
 esac
 
+rebuild_note
 protected_folder_heads_up

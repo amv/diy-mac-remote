@@ -34,6 +34,17 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Before anything else: could the app run from where the repo is? Not from
+# Desktop, Documents or Downloads — and the Desktop folder's start.command, like
+# the app, points back at this path. (install-self-signed.sh has asked already
+# when it is the one running this; asking twice costs nothing.)
+if ! "$SCRIPT_DIR/bundle-app.sh" --check-location; then
+  echo >&2
+  echo "Nothing was changed. Move the folder, then re-run from there:" >&2
+  echo "    ./$(basename "$0")${*:+ $*}" >&2
+  exit 1
+fi
+
 "$SCRIPT_DIR/gen-cert.sh" "$@"
 
 echo

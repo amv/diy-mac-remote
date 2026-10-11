@@ -246,13 +246,21 @@ function runScript(source) {
   if (isNil(script)) throw new Error('could not compile the keystroke script');
   // NULL for the error dictionary: a nil result already says it failed, and
   // reading an out-param dictionary through the bridge is the kind of thing
-  // that fails silently. The likely cause is worth stating outright.
+  // that fails silently. The likely causes are worth stating outright — both
+  // permissions, since a missing Accessibility fails here exactly like a
+  // refused System Events does, and the restart that a late grant needs.
   var result = script.executeAndReturnError($());
   if (isNil(result)) {
-    throw new Error('AppleScript refused to run the keystrokes. If macOS has ' +
-                    'asked to control "System Events" and the answer was no, ' +
-                    'turn it back on in System Settings > Privacy & Security > ' +
-                    'Automation. Script was: ' + source.split('\n').join(' / '));
+    throw new Error('AppleScript refused to run the keystrokes. Typing needs two ' +
+                    'permissions for whatever runs the server (DIY Remote Server, ' +
+                    'or your terminal), both in System Settings > Privacy & ' +
+                    'Security: Accessibility, and System Events under Automation. ' +
+                    'Switch on whichever is off, then stop the server and start ' +
+                    'it again: it keeps running without anything granted after ' +
+                    'it started. If both are on, the app was probably rebuilt ' +
+                    'since: run "tccutil reset All local.diy-mac-remote.server" ' +
+                    'and allow them again. Script was: ' +
+                    source.split('\n').join(' / '));
   }
 }
 

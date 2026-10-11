@@ -29,6 +29,10 @@ test('first run mints a master and derives + stores the credentials', async () =
     state.master = pairMaster(s.out());
     assert.ok(state.master, 'no pairing master printed');
     assert.ok(!/[^A-Za-z0-9_-]/.test(state.master), 'master is not URL-safe base64url');
+    // What to do next is said where it is needed: leave this terminal before
+    // the first touch, so the Accessibility grant lands on the app instead.
+    assert.match(s.out(), /Close this window/, 'banner should say to close the window');
+    assert.match(s.out(), /or build it: \.\/bundle-app\.sh\)/, 'banner should name the app');
     Object.assign(state, deriveCreds(state.master));
 
     assert.ok(fs.existsSync(path.join(DIR, 'secret')), 'secret file missing');

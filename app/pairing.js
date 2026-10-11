@@ -17,7 +17,7 @@
 // prefixes → independent oracles), and master stays high-entropy (128 bits) so it
 // can't be brute-forced against the on-disk secret. (Boundary is unchanged: this
 // does NOT stop an attacker who also captures live traffic, or reads memory. See
-// README › Security.)
+// docs/security.md.)
 
 var sys = require('./sys');
 var sha256 = require('./sha256');

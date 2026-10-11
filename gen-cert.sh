@@ -24,10 +24,10 @@
 #   ~/.diy-mac-remote/cert.pem      <- server cert chain (leaf + CA), served by the server
 #   ~/.diy-mac-remote/key.pem       <- server private key (owner-only)
 #
-# You install ca-cert.pem on the iPhone ONCE (see README > "Serve it over
-# HTTPS"). After that you can re-run this script any time to mint a fresh leaf
-# cert, and the phone keeps trusting it because it still chains up to the same
-# CA. The CA is only regenerated if it's missing.
+# You install ca-cert.pem on the iPhone ONCE (see docs/setup-options.md >
+# "Serve it over HTTPS"). After that you can re-run this script any time to mint
+# a fresh leaf cert, and the phone keeps trusting it because it still chains up
+# to the same CA. The CA is only regenerated if it's missing.
 #
 # By default the certificate covers exactly ONE name: this Mac's .local
 # (Bonjour) address. Not localhost, not LAN IPs, not a Tailscale name — the
@@ -290,7 +290,7 @@ if ! VERIFY_OUT="$(openssl verify -CAfile "$CA_CERT" "$TMP/leaf.pem" 2>&1)"; the
   echo "    $VERIFY_OUT" >&2
   echo >&2
   echo "Mint a fresh CA covering today's names (then install the new profile" >&2
-  echo "on the iPhone once — README > Serve it over HTTPS):" >&2
+  echo "on the iPhone once — docs/setup-options.md > Serve it over HTTPS):" >&2
   echo "    rm '$CA_KEY' '$CA_CERT' && $0 $*" >&2
   echo >&2
   echo "Your existing certificate and key were left untouched." >&2
@@ -315,6 +315,6 @@ for n in $DNS_NAMES; do echo "    DNS  $n (and subdomains)"; done
 for s in $(constraint_subnets); do echo "    IP   $s"; done
 echo
 echo "Files written to $DIR:"
-echo "    ca-cert.pem   -> install this on your iPhone (see README > Serve it over HTTPS)"
+echo "    ca-cert.pem   -> install this on your iPhone (see docs/setup-options.md)"
 echo "    cert.pem      -> server certificate chain (served automatically)"
 echo "    key.pem       -> server private key (owner-only)"

@@ -16,10 +16,11 @@
 #     braces (./start-plain.sh tailscale), or
 #   * on a network with no route to the internet at all.
 #
-# On any other network, prefer start.sh with a certificate — see README >
-# "Serve it over HTTPS". The app's own encryption (ChaCha20 + HMAC) is in place
-# either way; what plain HTTP costs you is protection against an active attacker
-# on the local network rewriting the page itself.
+# On any other network, prefer start.sh with a certificate — see
+# docs/setup-options.md > "Serve it over HTTPS". The app's own encryption
+# (ChaCha20 + HMAC) is in place either way; what plain HTTP costs you is
+# protection against an active attacker on the local network rewriting the page
+# itself.
 #
 # Any arguments you pass are forwarded straight to server.pl, e.g.
 #   ./start-plain.sh tailscale

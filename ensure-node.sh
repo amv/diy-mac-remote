@@ -98,8 +98,8 @@ usable_node() {
 # hard-link the Node binary to a second name, "DIY Remote Server", so that a
 # permission dialog naming the *asking program* would say something meaningful
 # instead of "node". The app bundle made that unnecessary — the permission
-# belongs to the app now, not to whatever binary it runs (README > Bundle the
-# server as its own app) — and worse, it made two entirely different things
+# belongs to the app now, not to whatever binary it runs (docs/app-bundle.md >
+# Bundle the server as its own app) — and worse, it made two entirely different things
 # appear under one name in the Accessibility list: the app, and a Node binary in
 # this folder. Two names for one file is a neat trick; two things wearing one
 # name in a permissions list is a trap. If you have one left over from an older

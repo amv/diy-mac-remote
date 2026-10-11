@@ -52,9 +52,9 @@ proc_cwd() {
 # Is this pid a running diy-mac-remote server from THIS repo? `ps -o command=`
 # prints the whole command line. start.sh and start-plain.sh start the server by
 # absolute path, which settles it outright. Started by hand as `node server.js`
-# or `perl server.pl` — which the README's server modes do — the path is
-# relative and says nothing on its own, so we ask where that process is running
-# from instead.
+# or `perl server.pl` — which the server modes in docs/setup-options.md do —
+# the path is relative and says nothing on its own, so we ask where that process
+# is running from instead.
 is_our_server() {
   case "$1" in ''|*[!0-9]*) return 1 ;; esac        # digits only
   kill -0 "$1" 2>/dev/null || return 1              # still alive?

@@ -19,7 +19,7 @@
 #     every packet between the phone and the Mac (the recommended pairing), or
 #   * on a network with no route to the internet at all.
 #
-# The application's own encryption (ChaCha20 + HMAC, see README > Security) is
+# The application's own encryption (ChaCha20 + HMAC, see docs/security.md) is
 # in place either way; what plain HTTP costs you is protection against an active
 # attacker on the local network rewriting the page itself. If that is a risk
 # where you are, use server.js with a certificate instead.
@@ -416,8 +416,8 @@ unless ((one($ready, 'ok') || '') eq '1') {
 
 print "diy-mac-remote server running.\n";
 print "   Serving plain HTTP — this entrypoint has no TLS at all. Use it over a\n";
-print "   tailnet, or on a network with no route to the internet. See README >\n";
-print "   \"Run it without Node.js\".\n";
+print "   tailnet, or on a network with no route to the internet. See\n";
+print "   docs/setup-options.md > \"Run it without Node.js\".\n";
 print '   Backend: ' . ($BACKEND_KIND eq 'jxa' ? 'osascript -l JavaScript' : 'node') . ".\n";
 if ((one($ready, 'dry-run') || '') eq '1') {
     print "NOTE: input is being logged, not executed (dry-run) — this is not a Mac,\n";

@@ -196,7 +196,7 @@ function banner() {
   }
 
   // Over plain HTTP a LAN address trusts the local network — an active attacker
-  // on a compromised router can rewrite the page itself (see README › Security).
+  // on a compromised router can rewrite the page itself (see docs/security.md).
   // With HTTPS + an installed CA that gap is closed, so no warning then.
   if ((kind === 'local' || kind === 'ip') && S.scheme !== 'https') {
     say('');
@@ -235,9 +235,21 @@ function banner() {
     say('   (link is too long to draw as a QR here — open the URL below directly)');
   }
   say(authUrl + '\n');
-  say('After pairing: add the page to your Home Screen (Share → Add to Home');
-  say('Screen) so the credentials are stored, then restart this server —');
-  say('the pairing key above should not stay on screen.\n');
+  // What to do next, in the one order that keeps both promises: the key leaves
+  // the screen, and the Accessibility grant goes to the app rather than to this
+  // terminal — which would hand it on to everything ever run in one. The
+  // README's quick start walks the same steps.
+  var bundleCmd = S.entry === 'perl' ? './bundle-app.sh --plain' : './bundle-app.sh';
+  say('Then, in this order:');
+  say('  1. On the iPhone: Share → Add to Home Screen. That saved app is the');
+  say('     pairing — this QR is never shown again.');
+  say('  2. Don\'t try the remote from here. Close this window: that stops the');
+  say('     server, and takes the pairing key above off the screen.');
+  say('  3. Start DIY Remote Server.app (in the Desktop diy-mac-remote folder,');
+  say('     or build it: ' + bundleCmd + ') and use the remote from there.');
+  say('     macOS asks for Accessibility the first time you do, for whatever');
+  say('     runs the server — let that be the app, not this Terminal and');
+  say('     everything you will ever run in it.\n');
 }
 
 // Append a fragment (replacing any existing one). The pairing fragment carries

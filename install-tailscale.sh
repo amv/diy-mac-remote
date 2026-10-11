@@ -25,6 +25,18 @@ set -eu
 # Resolve our own location, so the script works from any current directory.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Before anything else: could the app this builds run from where the repo is?
+# Not from Desktop, Documents or Downloads — and a downloaded ZIP lands in
+# Downloads. Stopping now costs nothing; finding out at the end would mean
+# redoing all of the below once the folder has moved, because every piece of it
+# points back at this path.
+if ! "${SCRIPT_DIR}/bundle-app.sh" --check-location; then
+  echo >&2
+  echo "Nothing was changed. Move the folder, then re-run from there:" >&2
+  echo "    ./$(basename "$0")${*:+ $*}" >&2
+  exit 1
+fi
+
 # Idempotent and silent when ./node/bin/node already works; otherwise it links
 # a pre-installed Node or downloads a verified build.
 "${SCRIPT_DIR}/ensure-node.sh"

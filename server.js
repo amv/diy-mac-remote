@@ -15,7 +15,8 @@
 // same application code runs under Node instead and logs what it would type.
 //
 // There is a second entrypoint, server.pl, which does this same job in Perl
-// over plain HTTP — no Node anywhere. See README › "Run it without Node.js".
+// over plain HTTP — no Node anywhere. See docs/setup-options.md › "Run it
+// without Node.js".
 //
 //   node server.js [detect|wifi|tailscale|<url>] [--tls|--no-tls] [--reset-token]
 
@@ -441,7 +442,7 @@ server.listen(PORT, bindHost, async () => {
     console.log(`🔒 Serving HTTPS (cert: ${TLS_CERT_FILE}).`);
   } else {
     console.log('   Serving plain HTTP. To serve HTTPS, run ./install-self-signed.sh');
-    console.log('   (or ./setup-https.sh). See README > "Serve it over HTTPS".');
+    console.log('   (or ./setup-https.sh). See docs/setup-options.md > "Serve it over HTTPS".');
   }
   console.log(`   Backend: ${backend.kind === 'jxa' ? 'osascript -l JavaScript' : 'node'}.`);
   if (protocol.one(hello, 'dry-run') === '1') {

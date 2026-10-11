@@ -47,6 +47,18 @@ set -eu
 # Resolve our own location, so the script works from any current directory.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Before anything else: could the app this builds run from where the repo is?
+# Not from Desktop, Documents or Downloads — and a downloaded ZIP lands in
+# Downloads. Stopping now costs nothing; finding out at the end would mean
+# redoing all of the below once the folder has moved, because every piece of it
+# points back at this path.
+if ! "$SCRIPT_DIR/bundle-app.sh" --check-location; then
+  echo >&2
+  echo "Nothing was changed. Move the folder, then re-run from there:" >&2
+  echo "    ./$(basename "$0")${*:+ $*}" >&2
+  exit 1
+fi
+
 # The certificate first, because it is the step that can refuse: no tailnet
 # means no MagicDNS name to put in it, and an existing CA that predates that
 # name has to be replaced (gen-cert.sh detects both and says so). Doing it up
