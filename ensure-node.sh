@@ -21,7 +21,7 @@
 # against a checksum that is *baked into this repository*.
 #
 # The subtle point: Node.js publishes its own checksum file at
-#   https://nodejs.org/dist/v26.3.1/SHASUMS256.txt
+#   https://nodejs.org/dist/v26.12.1/SHASUMS256.txt
 # but we deliberately DO NOT fetch and trust that at run time. If an attacker
 # controlled nodejs.org, they could hand you a malicious tarball AND a matching
 # SHASUMS256.txt line for it — the checksum would "verify" and tell you nothing.
@@ -42,8 +42,8 @@
 #
 # We pin both Mac architectures: Apple Silicon (arm64) and older Intel (x64).
 
-EXPECTED_SHA256_ARM64="49aca22a8c2992c16688baa512a7b00c41a4608e9675fcaa81534767bf1116ce"
-EXPECTED_SHA256_X64="dac58e340c721332d331a44c9ee2e126b26632c42d3028eb2ceb5c3f218798fa"
+EXPECTED_SHA256_ARM64="18830bf448fe187c650dc28c98aa8c968ed1d40b6dd032c081e70a384a1bf660"
+EXPECTED_SHA256_X64="b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff"
 
 set -eu   # -e: stop on the first error.  -u: error on unset variables.
 
@@ -166,7 +166,7 @@ esac
 # --- What we are fetching ---------------------------------------------------
 
 # The exact Node.js build, chosen above to match this Mac's architecture.
-NODE_VERSION="v26.3.1"
+NODE_VERSION="v26.12.1"
 NODE_FILE="node-${NODE_VERSION}-${NODE_ARCH}.tar.xz"
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_FILE}"
 
@@ -226,7 +226,7 @@ mkdir -p "$DEST_DIR" # Create the directory again
 echo "Unpacking into ./${DEST_DIR}"
 # `tar` unpacks a "tarball" — a single archive file (here a .tar.xz, which is
 # also compressed to be smaller) — back into the many files and folders inside it.
-# The tarball contains a top-level "node-v26.3.1-darwin-arm64/" directory.
+# The tarball contains a top-level "node-v26.12.1-darwin-arm64/" directory.
 # --strip-components=1 drops that wrapper so the contents (bin/, lib/, ...) land
 # directly inside ./node. -x extract, -f read from a file.
 tar -xf "$TARBALL" -C "$DEST_DIR" --strip-components=1

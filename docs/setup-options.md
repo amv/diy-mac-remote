@@ -29,7 +29,7 @@ to run as often as you like:
 ./ensure-node.sh              # no-op if ./node/bin/node already works;
                               # else links your Node, or downloads + verifies one
 ./ensure-node.sh --download   # insist on the pinned, checksum-verified build
-./node/bin/node --version     # v26.3.1 if downloaded; your own version if linked
+./node/bin/node --version     # v26.12.1 if downloaded; your own version if linked
 ```
 
 If you already have Node.js (v18 or newer), it just symlinks it to
