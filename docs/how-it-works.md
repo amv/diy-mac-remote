@@ -197,10 +197,12 @@ order.
   path: runs `setup-https.sh` with `ensure-node.sh` in the background, then
   builds the app once that has finished. Arguments are forwarded to
   `gen-cert.sh`.
-- `install-tailscale.sh` — installer for the Tailscale path: runs
-  `ensure-node.sh`, drops just a `start.command` (with `tailscale` mode baked
-  in) into the Desktop folder and builds the app next to it — no certificate,
-  nothing to install on the phone.
+- `install-tailscale.sh` — installer for the Tailscale path, and the
+  Node-free one: drops just a `start.command` (running
+  `start-plain.sh tailscale`) into the Desktop folder and builds the app next
+  to it with `bundle-app.sh --plain tailscale` — no certificate, no Node.js,
+  nothing to install on the phone, and plain HTTP even if an earlier HTTPS
+  install left a certificate behind.
 - `install-tailscale-self-signed.sh` — installer for both at once, and the
   strongest of the three: a certificate covering this Mac's MagicDNS name as
   well as its `.local` name, plus `tailscale` mode baked into `start.command`

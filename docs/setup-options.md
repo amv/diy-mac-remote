@@ -109,9 +109,11 @@ On any ordinary home or office Wi-Fi, prefer `./start.sh` with a certificate:
   including [starting it at login](app-bundle.md#starting-it-at-login). Everything in
   [Bundle the server as its own app](app-bundle.md#bundle-the-server-as-its-own-app) holds,
   minus the Node.js download it otherwise does first.
-- **The installers** (`install-self-signed.sh`, `install-tailscale.sh`, …) are
-  the Node path: they set up certificates and the Desktop folder, and they run
-  `ensure-node.sh`. The Node-free path is driven from the Terminal, plus
+- **The installers** — `install-tailscale.sh` _is_ this path: its
+  `start.command` and its app both run `./start-plain.sh tailscale`, and it
+  never touches Node.js. The two certificate installers
+  (`install-self-signed.sh`, `install-tailscale-self-signed.sh`) are the Node
+  path, since HTTPS needs it. Anywhere else, drive it from the Terminal, plus
   `./bundle-app.sh --plain` if you want the app and the login start.
 
 ### How it manages that
@@ -166,8 +168,9 @@ reaches further. Before taking the VPN on its own, read
 — it's short, and it's the honest version.
 
 Each installer is described in the section it belongs to, and they all do the
-same four things — certificate (where applicable), Node.js, a Desktop folder
-with a `start.command` that has the right mode baked in, and
+same four things — certificate (where applicable), Node.js (where applicable:
+`install-tailscale.sh` runs the [Node-free server](#run-it-without-nodejs)), a
+Desktop folder with a `start.command` that has the right mode baked in, and
 **`DIY Remote Server.app`** in that same folder ([why an
 app](app-bundle.md#bundle-the-server-as-its-own-app): the Accessibility permission ends up
 belonging to it instead of to your Terminal). **You run these yourself, in
@@ -177,7 +180,7 @@ and this is the part you want to be able to watch.
 | Installer                            | Sets up                                      | Described in                                         |
 | ------------------------------------ | -------------------------------------------- | ---------------------------------------------------- |
 | `./install-self-signed.sh`           | certificate                                  | [Serve it over HTTPS](#1-run-the-setup-on-the-mac)   |
-| `./install-tailscale.sh`             | Tailscale mode                               | [Use it over Tailscale](#use-it-over-tailscale-vpn)  |
+| `./install-tailscale.sh`             | Tailscale mode, no Node.js                   | [Use it over Tailscale](#use-it-over-tailscale-vpn)  |
 | `./install-tailscale-self-signed.sh` | both — certificate covering the tailnet name | [Both at once](#both-at-once-tailscale--certificate) |
 
 **Doing neither also works**, and the control traffic stays encrypted, but the
@@ -412,17 +415,18 @@ The steps below are for everyone else.
 1. Install Tailscale on **both** your Mac and your iPhone, and sign in to the
    same account on each.
 2. On the Mac, **in Terminal**, run
-   [`install-tailscale.sh`](../install-tailscale.sh) — it makes sure there's a
-   Node.js to run on and puts a double-clickable `start.command`, plus
-   `DIY Remote Server.app`, into a `diy-mac-remote` folder on your Desktop.
-   Both have `tailscale` mode baked in, so a double-click can never accidentally
-   start the server in a less strict mode. (Or just run `./start.sh tailscale`.)
+   [`install-tailscale.sh`](../install-tailscale.sh) — it puts a
+   double-clickable `start.command`, plus `DIY Remote Server.app`, into a
+   `diy-mac-remote` folder on your Desktop. Both run the
+   [Node-free server](#run-it-without-nodejs) with `tailscale` mode baked in,
+   so a double-click can never accidentally start the server in a less strict
+   mode, and nothing is downloaded: the tailnet is doing the transport
+   security here anyway, which is what makes plain HTTP sound. It also means a
+   certificate left over from an earlier HTTPS install can't switch the server
+   to HTTPS. (Or just run `./start-plain.sh tailscale`.)
    To take the certificate as well — recommended, and cheapest decided now —
    run [`install-tailscale-self-signed.sh`](#both-at-once-tailscale--certificate)
-   instead of this one. To take **no Node.js** instead, run
-   `./start-plain.sh tailscale` and skip the installer: the tailnet is doing the
-   transport security here anyway, which is what makes that pairing sound
-   ([Run it without Node.js](#run-it-without-nodejs)).
+   instead of this one; that path serves HTTPS, so it runs on Node.js.
 3. Scan the QR code with your iPhone, in **Safari**, and then **Add it to your
    Home Screen** — see [Pair the phone](pairing.md). The QR is printed
    only on that first run, and the Home Screen app is what remembers the
@@ -451,7 +455,7 @@ What changes is **who** you're relying on for that, and what's left if they fail
   is weak, but that it's alone.
 - **Anything that puts you back on plain LAN exposes you completely.** What the
   phone uses is the address baked into its Home Screen app at pairing time, so
-  this is decided when you pair, once: pair with `./start.sh tailscale` (which
+  this is decided when you pair, once: pair in `tailscale` mode (which
   `install-tailscale.sh` bakes in for you) and the app holds your MagicDNS name
   for good. Pair with plain `./start.sh` and `detect` may well hand it a LAN
   address instead — which it will then keep using, VPN or no VPN.

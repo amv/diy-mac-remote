@@ -189,6 +189,13 @@ done
 # Which launcher the app will run. Everything below refers to it by name only,
 # so the two paths differ in exactly one place.
 if $PLAIN; then START_NAME="start-plain.sh"; else START_NAME="start.sh"; fi
+
+# Turning the login start off rebuilds the app, so the command for it has to
+# carry everything this build was given — or following it would quietly swap
+# the app for one with a different entrypoint or mode.
+UNDO_AT_LOGIN="./bundle-app.sh --no-at-login"
+if $PLAIN; then UNDO_AT_LOGIN="$UNDO_AT_LOGIN --plain"; fi
+UNDO_AT_LOGIN="$UNDO_AT_LOGIN$ARGS_SHOWN"
 START_SH="$SCRIPT_DIR/$START_NAME"
 ICON_SRC="$SCRIPT_DIR/public/icon-512.png"
 
@@ -1033,8 +1040,9 @@ at_login_note() {
     on)
       echo "  It starts when you log in from now on — a LaunchAgent in"
       echo "  ~/Library/LaunchAgents, which starts it only once the phone is paired,"
-      echo "  and does nothing at all until then. To undo: ./bundle-app.sh"
-      echo "  --no-at-login, or the switch in System Settings > General > Login Items." ;;
+      echo "  and does nothing at all until then. To undo:"
+      echo "      $UNDO_AT_LOGIN"
+      echo "  or the switch in System Settings > General > Login Items." ;;
     removed)
       echo "  It no longer starts when you log in: the LaunchAgent is deleted." ;;
     off)
@@ -1160,7 +1168,7 @@ case "$AT_LOGIN_STATE" in
     echo "     starts nothing until the phone is paired. Nothing was started"
     echo "     just now; this arms the next login. To undo, either:"
     echo
-    echo "       ./bundle-app.sh --no-at-login${ARGS_SHOWN:+$ARGS_SHOWN}"
+    echo "       $UNDO_AT_LOGIN"
     echo
     echo "     or turn '$APP_NAME' off in System Settings > General >"
     echo "     Login Items, under 'Allow in the Background'." ;;

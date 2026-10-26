@@ -30,18 +30,23 @@
 # With --start-args <args>, the generated start.command passes those arguments
 # to start.sh — e.g. --start-args tailscale bakes in Tailscale mode, so that
 # double-click can never accidentally start the server in a less strict mode.
+#
+# With --plain, start.command runs start-plain.sh (perl + osascript, no Node.js)
+# instead of start.sh — the same choice as ./bundle-app.sh --plain.
 
 set -eu
 
 START_ONLY=false
 START_ARGS=""
+PLAIN=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --start-command-only) START_ONLY=true ;;
     --start-args)
       [ "$#" -ge 2 ] || { echo "--start-args needs a value" >&2; exit 1; }
       shift; START_ARGS="$1" ;;
-    *) echo "Unknown option: $1 (supported: --start-command-only, --start-args <args>)" >&2
+    --plain) PLAIN=true ;;
+    *) echo "Unknown option: $1 (supported: --start-command-only, --start-args <args>, --plain)" >&2
        exit 1 ;;
   esac
   shift
@@ -57,7 +62,9 @@ LEAF_CERT="$DIR/cert.pem"
 DESKTOP="${DIY_MAC_REMOTE_DESKTOP:-$HOME/Desktop}"
 DESKTOP_DIR="$DESKTOP/diy-mac-remote"
 
-START_SH="$SCRIPT_DIR/start.sh"
+if $PLAIN; then START_NAME="start-plain.sh"; START_NOTE=", no Node.js"
+else START_NAME="start.sh"; START_NOTE=""; fi
+START_SH="$SCRIPT_DIR/$START_NAME"
 STOP_SH="$SCRIPT_DIR/stop.sh"
 RESET_SH="$SCRIPT_DIR/reset.sh"
 
@@ -68,7 +75,7 @@ if ! $START_ONLY && { [ ! -f "$CA_CERT" ] || [ ! -f "$LEAF_CERT" ]; }; then
   exit 1
 fi
 if [ ! -x "$START_SH" ] || [ ! -x "$STOP_SH" ] || [ ! -x "$RESET_SH" ]; then
-  echo "ERROR: expected start.sh, stop.sh and reset.sh next to this script —" >&2
+  echo "ERROR: expected $START_NAME, stop.sh and reset.sh next to this script —" >&2
   echo "run this from the repo." >&2
   exit 1
 fi
@@ -204,7 +211,7 @@ fi
 
 # The .command files: Finder runs an executable .command file in a new
 # Terminal window. Terminal starts it in $HOME, so bake in the absolute paths
-# of the start.sh / reset.sh that live next to this script. They are thin
+# of the start.sh (or start-plain.sh) / reset.sh that live next to this script. They are thin
 # entries only — all logic stays in the .sh scripts.
 cat > "$DESKTOP_DIR/start.command" <<CMD
 #!/bin/sh
@@ -245,7 +252,7 @@ if ! $START_ONLY; then
   echo "    diy-mac-remote-ca.pem            -> AirDrop this to the iPhone"
   echo "    HOWTO-AIRDROP-CERT-TO-PHONE.html -> the steps, in a browser page"
 fi
-echo "    start.command                    -> double-click to start the server${START_ARGS:+ (mode: $START_ARGS)}"
+echo "    start.command                    -> double-click to start the server${START_ARGS:+ (mode: $START_ARGS)}$START_NOTE"
 echo "    stop.command                     -> double-click to stop it again"
 echo "    reset-app-secrets.command        -> forget the pairing (devices re-pair)"
 if ! $START_ONLY; then
