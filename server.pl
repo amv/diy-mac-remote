@@ -90,12 +90,11 @@ $| = 1;                  # our output is a log; keep it in order with the backen
 # network this server should be on, so it listens on this Mac's tailnet address
 # and nothing else: on a coffee-shop Wi-Fi the port is simply not there. The cost
 # is the race the all-interfaces bind avoided — the address does not exist until
-# Tailscale is up — so at startup we wait for it (a login start can beat the
-# tailnet by a while) instead of falling back to a wider bind. HOST, if set,
+# Tailscale is up — so at startup we wait for it, retrying every 2 seconds for as
+# long as it takes (a login start can beat the tailnet by a while), instead of
+# giving up or falling back to a wider bind. HOST, if set,
 # still wins. (server.js does the same thing.)
 my $TAILSCALE_MODE = (grep { $_ eq 'tailscale' } @ARGS) ? 1 : 0;
-my $TAILNET_WAIT = (defined $ENV{DIY_MAC_REMOTE_TAILNET_WAIT} && $ENV{DIY_MAC_REMOTE_TAILNET_WAIT} =~ /\A\d+\z/)
-    ? $ENV{DIY_MAC_REMOTE_TAILNET_WAIT} : 60;
 
 # This Mac's tailnet IPv4 address, or undef if there is no tailnet up right now.
 sub tailnet_address {
@@ -123,18 +122,17 @@ sub tailnet_address {
 sub resolve_bind {
     return $HOST_OVERRIDE if $HOST_OVERRIDE;
     return '0.0.0.0' unless $TAILSCALE_MODE;
-    my $deadline = time() + $TAILNET_WAIT;
+    # Wait for as long as it takes. Giving up would leave nothing listening and
+    # nothing to restart it, and falling back to a wider bind is the one thing
+    # this mode must never do.
     my $said = 0;
     while (1) {
         my $ip = tailnet_address();
         return $ip if defined $ip;
-        if (time() >= $deadline) {
-            print "\n❌ Tailscale mode: no tailnet address for this Mac (is Tailscale running "
-                . "and signed in?). Not listening on any other interface. Start Tailscale and "
-                . "try again, or drop \"tailscale\" to listen on the LAN.\n";
-            exit 1;
+        unless ($said++) {
+            print "Tailscale mode: waiting for the Tailscale network to come up "
+                . "(is Tailscale running and signed in?). Not listening on any interface until it does...\n";
         }
-        unless ($said++) { print "Waiting up to ${TAILNET_WAIT}s for the Tailscale network to come up...\n"; }
         sleep 2;
     }
 }

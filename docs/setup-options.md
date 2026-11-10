@@ -510,9 +510,9 @@ one interface only, bind it there: `HOST=<addr> ./start.sh`.
 `./start.sh tailscale` (or `./start-plain.sh tailscale`, or the app built with
 `tailscale`) the server looks up this Mac's tailnet IPv4 address and listens
 there and nowhere else — on any other network the port is not open at all. The
-address only exists once Tailscale is up, so at startup the server waits for it
-(up to 60 seconds; `DIY_MAC_REMOTE_TAILNET_WAIT=<seconds>` changes that) and then
-gives up with an error. It never falls back to listening on every interface.
+address only exists once Tailscale is up, so at startup the server checks for it
+every 2 seconds, for as long as it takes, and starts listening the moment it
+appears. It never gives up and never falls back to listening on every interface.
 `HOST=<addr>` still overrides it. Only the tailnet's IPv4 address is bound.
 
 In the all-interfaces modes, anyone who can reach the port gets as far as the

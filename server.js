@@ -408,12 +408,11 @@ const server = TLS
 // network this server should be on, so it listens on this Mac's tailnet address
 // and nothing else: on a coffee-shop Wi-Fi the port is simply not there. The
 // cost is the race the all-interfaces bind avoided — the address does not exist
-// until Tailscale is up — so at startup we wait for it (a login start can beat
-// the tailnet by a while) instead of falling back to a wider bind. HOST, if set,
+// until Tailscale is up — so at startup we wait for it, retrying every 2 seconds
+// for as long as it takes (a login start can beat the tailnet by a while), instead
+// of giving up or falling back to a wider bind. HOST, if set,
 // still wins.
 const TAILSCALE_MODE = ARGV.includes('tailscale');
-const TAILNET_WAIT_S = Number(process.env.DIY_MAC_REMOTE_TAILNET_WAIT) >= 0
-  ? Number(process.env.DIY_MAC_REMOTE_TAILNET_WAIT) : 60;
 
 // This Mac's tailnet IPv4 address, or null if there is no tailnet up right now.
 function tailnetAddress() {
@@ -438,19 +437,16 @@ function sleepMs(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0,
 function resolveBindHost() {
   if (HOST_OVERRIDE) return HOST_OVERRIDE;
   if (!TAILSCALE_MODE) return '0.0.0.0';
-  const deadline = Date.now() + TAILNET_WAIT_S * 1000;
+  // Wait for as long as it takes. Giving up would leave nothing listening and
+  // nothing to restart it, and falling back to a wider bind is the one thing this
+  // mode must never do.
   let said = false;
   for (;;) {
     const ip = tailnetAddress();
     if (ip) return ip;
-    if (Date.now() >= deadline) {
-      console.error('\n❌ Tailscale mode: no tailnet address for this Mac (is Tailscale running ' +
-        'and signed in?). Not listening on any other interface. Start Tailscale and try again, ' +
-        'or drop "tailscale" to listen on the LAN.');
-      process.exit(1);
-    }
     if (!said) {
-      console.log(`Waiting up to ${TAILNET_WAIT_S}s for the Tailscale network to come up...`);
+      console.log('Tailscale mode: waiting for the Tailscale network to come up ' +
+        '(is Tailscale running and signed in?). Not listening on any interface until it does...');
       said = true;
     }
     sleepMs(2000);

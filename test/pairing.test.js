@@ -9,7 +9,7 @@ const { test, assert } = require('./harness');
 const {
   deriveCreds, buildEnvelope, getFreePort,
   startServer, stopServer, runServer, httpReq, pairMaster, mkTempHome,
-  fakeTailscaleBin, httpFrom, lanIPv4, assertStaticParity,
+  fakeTailscaleBin, httpFrom, lanIPv4, assertStaticParity, PROJECT_ROOT,
 } = require('./helpers');
 
 // One HOME shared across the restart/reset sequence (tests run in order).
@@ -157,8 +157,6 @@ test('an oversized body is refused, and the server survives it', async () => {
 // binds the tailnet address only: the fake tailscale below reports 127.0.0.1 as
 // that address, so another address on this host stands in for "the LAN".
 
-const FAST = { DIY_MAC_REMOTE_TAILNET_WAIT: '0' };
-
 for (const perl of [false, true]) {
   const who = perl ? 'server.pl' : 'server.js';
 
@@ -182,7 +180,7 @@ for (const perl of [false, true]) {
     const bin = fakeTailscaleBin(home);
     const port = await getFreePort();
     const s = await startServer({ home, port, perl, url: null, args: ['tailscale'],
-      env: { PATH: `${bin}:${process.env.PATH}`, ...FAST } });
+      env: { PATH: `${bin}:${process.env.PATH}` } });
     try {
       assert.match(s.out(), /tailnet address only \(127\.0\.0\.1\)/, s.out());
       const ok = await httpFrom({ host: '127.0.0.1', port, path: '/nonce' });
@@ -204,7 +202,7 @@ for (const perl of [false, true]) {
     const bin = fakeTailscaleBin(home);
     const port = await getFreePort();
     const s = await startServer({ home, port, perl, url: null, args: ['tailscale'],
-      env: { PATH: `${bin}:${process.env.PATH}`, HOST: '127.0.0.2', ...FAST } });
+      env: { PATH: `${bin}:${process.env.PATH}`, HOST: '127.0.0.2' } });
     try {
       assert.strictEqual((await httpFrom({ host: '127.0.0.2', port, path: '/nonce' })).status, 200);
       await assert.rejects(httpFrom({ host: '127.0.0.1', port, path: '/nonce' }),
@@ -215,18 +213,41 @@ for (const perl of [false, true]) {
     }
   });
 
-  test(`${who}: tailscale mode with no tailnet never falls back to a wider bind`, async () => {
+  test(`${who}: tailscale mode waits for the tailnet, then listens on it only`, async () => {
     const home = mkTempHome();
     const bin = fakeTailscaleBin(home, { running: false });
     const port = await getFreePort();
+    const env = { PATH: `${bin}:${process.env.PATH}` };
+    const cmd = perl ? { bin: 'perl', argv: ['server.pl', 'tailscale'] }
+                     : { bin: process.execPath, argv: ['server.js', 'tailscale'] };
+    let out = '';
+    const child = require('child_process').spawn(cmd.bin, cmd.argv,
+      { cwd: PROJECT_ROOT, env: { ...process.env, HOME: home, PORT: String(port), ...env } });
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { out += c; });
     try {
-      const r = await runServer({ home, port, perl, url: null, args: ['tailscale'],
-        env: { PATH: `${bin}:${process.env.PATH}`, ...FAST } });
-      assert.strictEqual(r.code, 1, 'should exit non-zero, got ' + r.code + '\n' + r.out);
-      assert.match(r.out, /Not listening on any other interface/, r.out);
+      // Tailnet down: it keeps waiting (does not exit), says so, and listens nowhere.
+      await new Promise((r) => setTimeout(r, 2500));
+      assert.strictEqual(child.exitCode, null, 'must keep waiting, but exited:\n' + out);
+      assert.match(out, /waiting for the Tailscale network/, out);
+      for (const host of ['127.0.0.1', lanIPv4()].filter(Boolean)) {
+        await assert.rejects(httpFrom({ host, port, path: '/nonce' }),
+          (e) => e.code === 'ECONNREFUSED', `${host} must not be listening yet`);
+      }
       assert.ok(!fs.existsSync(path.join(home, '.diy-mac-remote', 'secret')),
-        'must not leave a half-minted pairing behind');
+        'must not mint a pairing while it has no address');
+      // Tailnet comes up: within a couple of retries it starts listening there.
+      fakeTailscaleBin(home, { running: true });
+      let up = false;
+      for (let i = 0; i < 20 && !up; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        up = await httpFrom({ host: '127.0.0.1', port, path: '/nonce' })
+          .then((r) => r.status === 200, () => false);
+      }
+      assert.ok(up, 'should start listening once the tailnet is up:\n' + out);
+      assert.match(out, /tailnet address only \(127\.0\.0\.1\)/, out);
     } finally {
+      await stopServer(child);
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
