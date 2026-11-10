@@ -39,6 +39,20 @@ function buildEnvelope(secret, token, nonce, counter, includeToken) {
   return JSON.stringify({ iv: ivB, ct: ctB, mac });
 }
 
+// Like buildEnvelope, for any list of ops and any credentials.
+function buildOpsEnvelope(secret, token, nonce, counter, ops) {
+  const encKey = crypto.createHash('sha256').update('diy-mac-remote-enc:' + secret).digest();
+  const macKey = crypto.createHash('sha256').update('diy-mac-remote-mac:' + secret).digest();
+  const plain = Buffer.from(JSON.stringify({ n: nonce, c: counter, o: ops, p: token }), 'utf8');
+  const padded = Buffer.alloc(Math.ceil((plain.length + 1) / 256) * 256, 0x20);
+  plain.copy(padded);
+  const iv = crypto.randomBytes(12);
+  const ct = Buffer.from(chacha20.xor(encKey, iv, 1, padded));
+  const ivB = iv.toString('base64'), ctB = ct.toString('base64');
+  const mac = crypto.createHmac('sha256', macKey).update('POST\n/msg\n' + ivB + '\n' + ctB).digest('hex');
+  return JSON.stringify({ iv: ivB, ct: ctB, mac });
+}
+
 // Ask the OS for a free TCP port (tiny bind-then-close; good enough for tests).
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -272,7 +286,7 @@ function lanIPv4() {
 }
 
 module.exports = {
-  PROJECT_ROOT, sha256hex, deriveCreds, buildEnvelope, getFreePort,
+  PROJECT_ROOT, sha256hex, deriveCreds, buildEnvelope, buildOpsEnvelope, getFreePort,
   startServer, stopServer, runServer, httpReq, httpBytes, assertStaticParity,
   pairMaster, mkTempHome, fakeTailscaleBin, httpFrom, lanIPv4,
 };

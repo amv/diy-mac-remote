@@ -319,6 +319,23 @@ var sys = {
       $(path), true, { NSFilePosixPermissions: 0x1c0 }, $()); // 0o700
   },
 
+  removeFile: function (path) {
+    if (!fm.fileExistsAtPath($(path))) return;
+    if (!fm.removeItemAtPathError($(path), $())) throw new Error('cannot remove ' + path);
+  },
+
+  // NSFileManager's move refuses to overwrite, so the destination goes first.
+  // That is two steps and not one atomic rename: pairing.js is written so that a
+  // crash between them is put right on the next start.
+  renameReplace: function (from, to) {
+    if (fm.fileExistsAtPath($(to)) && !fm.removeItemAtPathError($(to), $())) {
+      throw new Error('cannot replace ' + to);
+    }
+    if (!fm.moveItemAtPathToPathError($(from), $(to), $())) {
+      throw new Error('cannot move ' + from + ' to ' + to);
+    }
+  },
+
   randomBase64: function (n) {
     var fh = $.NSFileHandle.fileHandleForReadingAtPath('/dev/urandom');
     if (isNil(fh)) throw new Error('cannot open /dev/urandom for key material');

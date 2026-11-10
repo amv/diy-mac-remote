@@ -285,6 +285,8 @@ function json(status, obj) {
 //   { t:'m', k:'up', btn:'l'|'r' }    mouse button up (release)
 //   { t:'m', k:'sc', dy }             scroll wheel
 //   { t:'s', k:<name> }               media/system control (input.js runSystem)
+//   { t:'ping' }                      do nothing, but only for a valid pairing
+//   { t:'r', s:<hex>, h:<hex> }       re-key, alone in its batch (doRekey below)
 function runOp(op) {
   if (!op || typeof op !== 'object') throw new Error('bad op');
   if (op.t === 'k') {
@@ -294,6 +296,9 @@ function runOp(op) {
   }
   if (op.t === 'm') return input.runMouse(op);
   if (op.t === 's') return input.runSystem(op);
+  // A no-op that still has to authenticate: how the phone asks "do these
+  // credentials work?" without moving anything.
+  if (op.t === 'ping') return { ok: true };
   throw new Error('unknown op type');
 }
 
@@ -319,6 +324,24 @@ function dispatchOps(ops) {
     sys.log('Dispatch error: ' + err.message);
     return json(500, { error: err.message });
   }
+}
+
+// The phone's one-time swap of the pairing master for credentials of its own
+// (pairing.rekey explains why). On success the session is replaced here too, so
+// the old secret stops working in this process, not just after a restart.
+function doRekey(op) {
+  var result;
+  try {
+    result = pairing.rekey(op.s, op.h);
+  } catch (err) {
+    if (err.rekeyStatus) return json(err.rekeyStatus, { error: err.message });
+    sys.log('Re-key failed: ' + err.message);
+    return json(500, { error: 'rekey failed' });
+  }
+  S.session = envelope.create(result.secret);
+  S.tokenHash = result.tokenHash;
+  sys.log('The phone re-keyed the pairing: the key in the saved link no longer works.');
+  return json(200, { ok: true });
 }
 
 // Answer one request. `req` is { method, path (with any query), body }.
@@ -351,6 +374,15 @@ function handle(req) {
     // Second-layer auth: the decrypted payload must carry the token (msg.p) whose
     // hash matches the one on disk. Read access to the disk alone can't produce it.
     if (!pairing.tokenOk(msg.p, S.tokenHash)) return json(401, { error: 'bad or missing token' });
+
+    // A re-key replaces the credentials this very request was just checked
+    // against, so it is never one op among others.
+    var ops = Array.isArray(msg.o) ? msg.o : [msg.o];
+    for (var i = 0; i < ops.length; i++) {
+      if (ops[i] && ops[i].t === 'r') {
+        return ops.length === 1 ? doRekey(ops[0]) : json(400, { error: 'rekey must be sent alone' });
+      }
+    }
 
     return dispatchOps(msg.o);
   }

@@ -78,6 +78,12 @@ const sys = {
     fs.mkdirSync(path, { recursive: true, mode: 0o700 });
   },
 
+  removeFile(path) {
+    try { fs.unlinkSync(path); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  },
+
+  renameReplace(from, to) { fs.renameSync(from, to); },
+
   randomBase64(n) { return crypto.randomBytes(n).toString('base64'); },
 
   exec(bin, args) {

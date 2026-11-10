@@ -42,6 +42,8 @@ function makeStubHost() {
     readOwnedText: (file) => (files.has(file) ? files.get(file).trim() || null : null),
     writePrivateText: (p, text) => { files.set(p, text); },
     mkdirPrivate: (p) => { files.set(p, ''); },
+    removeFile: (p) => { files.delete(p); },
+    renameReplace: (from, to) => { files.set(to, files.get(from)); files.delete(from); },
     randomBase64: (n) => crypto.randomBytes(n).toString('base64'),
     exec: () => null,          // no scutil, no tailscale, no tmutil
     execDetached: () => {},
