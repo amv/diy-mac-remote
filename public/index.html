@@ -499,7 +499,8 @@
  * re-key and the answer is lost, or the request never arrives. The new
  * credentials are therefore written down BEFORE they are sent, and a later launch
  * asks the server which of the two it is: do the new ones work (ping)? Then adopt
- * them. Not? Then try again with fresh ones.
+ * them. Does the server say it does not know them? Then send the same ones again.
+ * Any other answer decides nothing, and the next launch asks again.
  *
  *   store.get/set/remove(key)   a string store (localStorage)
  *   random(n)                   -> n random bytes
@@ -507,12 +508,20 @@
  *   sha256hex(string)           -> hex SHA-256 of the string's UTF-8 bytes
  *   current()                   -> { secret, token } now in use
  *   adopt({ secret, token })    make these the credentials, and keep them
- *   call(creds, ops)            -> Promise<{ status }>; REJECTS when the outcome
- *                               is unknown (no connection, no answer)
+ *   call(creds, ops)            -> Promise<{ status, error }>; REJECTS when the outcome
+ *                               is unknown (no connection, no answer). `error` is the
+ *                               server's message, if it sent one.
  */
 var Rekey = (function () {
   var PENDING = 'diy-mac-remote_rekey'; // set while the credentials in use came from the master
   var NEXT = 'diy-mac-remote_next';     // the credentials a re-key is trying to install
+
+  // The server's way of saying "I do not know these credentials" — as opposed to
+  // the other 401s (an expired nonce, a replayed counter), which say nothing about
+  // the credentials at all.
+  function unknownCreds(r) {
+    return r.status === 401 && /bad mac|token/.test(r.error || '');
+  }
 
   function create(d) {
     function readNext() {
@@ -531,32 +540,42 @@ var Rekey = (function () {
       return 'done';
     }
 
-    // Resolves true (these work), false (the server says they don't), or rejects.
-    function works(creds) {
-      return d.call(creds, [{ t: 'ping' }]).then(function (r) { return r.status === 200; });
+    // Do these credentials work? Resolves 'yes', 'no' (the server does not know
+    // them) or 'unknown' (any other answer: a 5xx, an expired nonce — not proof of
+    // anything), or rejects.
+    function probe(creds) {
+      return d.call(creds, [{ t: 'ping' }]).then(function (r) {
+        if (r.status === 200) return 'yes';
+        return unknownCreds(r) ? 'no' : 'unknown';
+      });
     }
 
-    function attempt() {
+    // Ask the server to install `next`; with none given, make fresh credentials. A
+    // retry passes the ones it already wrote down: sending the same pair again is
+    // harmless.
+    function attempt(retryWith) {
       return Promise.resolve().then(function () {
-        var next = { secret: d.toHex(d.random(32)), token: d.toHex(d.random(32)) };
+        var next = retryWith || { secret: d.toHex(d.random(32)), token: d.toHex(d.random(32)) };
         d.store.set(NEXT, JSON.stringify(next));
         var hash = d.sha256hex('diy-mac-remote-token:' + next.token);
         return d.call(d.current(), [{ t: 'r', s: next.secret, h: hash }]).then(function (r) {
           if (r.status === 200) return commit(next);
           if (r.status >= 500) return 'later';   // the server may have got halfway: keep NEXT
-          // Nothing more to try. 401 means the server does not know these
-          // credentials at all — the pairing is stale, and the user has to be told.
-          // Anything else is a refusal to re-key (an install from before it
-          // existed), which changes nothing about whether the app works.
+          // An expired nonce and the like: nothing was decided either way.
+          if (r.status === 401 && !unknownCreds(r)) return 'later';
+          // Nothing more to try. "Unknown credentials" means the pairing is stale,
+          // and the user has to be told. Anything else is a refusal to re-key (an
+          // install from before it existed), which changes nothing about whether
+          // the app works.
           d.store.remove(NEXT);
           d.store.remove(PENDING);
-          return r.status === 401 ? 'stale' : 'refused';
+          return unknownCreds(r) ? 'stale' : 'refused';
         }, function () { return 'later'; });     // outcome unknown: keep NEXT, ask next time
       });
     }
 
     return {
-      markPending: function () { d.store.set(PENDING, '1'); },
+      markPending: function () { d.store.remove(NEXT); d.store.set(PENDING, '1'); },
       isPending: function () { return !!d.store.get(PENDING); },
 
       // Resolves 'none' (nothing to do), 'done', 'refused' (it cannot re-key, and
@@ -566,12 +585,12 @@ var Rekey = (function () {
         if (!d.store.get(PENDING)) return Promise.resolve('none');
         var next = readNext();
         var settled = next
-          ? works(next).then(function (ok) {
-              if (ok) return commit(next);
-              d.store.remove(NEXT);
-              return attempt();
+          ? probe(next).then(function (verdict) {
+              if (verdict === 'yes') return commit(next);   // the answer was lost: adopt
+              if (verdict === 'no') return attempt(next);   // it never arrived: send it again
+              return 'later';
             }, function () { return 'later'; })
-          : attempt();
+          : attempt(null);
         return settled.catch(function () { return 'later'; });
       }
     };
@@ -614,10 +633,21 @@ var Rekey = (function () {
   // The server does not know this app's credentials: the pairing was reset, or
   // this is a copy of an old one. Nothing the app can do fixes that, so say what
   // does — and keep saying it, rather than a "bad mac" that vanishes on the next tap.
+  //
+  // In a Safari tab the likelier cause is the good one: the Home Screen app has
+  // re-keyed the pairing, which retires the key this tab was opened with. Deleting
+  // anything would be the wrong advice there.
   function showStale() {
     staleShown = true;
-    noticeEl.textContent = 'This pairing is no longer valid. Delete this app, reset the app ' +
-      'secrets on the Mac (reset-app-secrets.command), and pair again.';
+    if (!isStandalone() && isIOS()) {
+      noticeEl.textContent = 'The key in this page\'s address no longer works — normally because ' +
+        'the Home Screen app has replaced it. Open Mac Remote from your Home Screen instead. ' +
+        'No such app, or it says this too? Reset the app secrets on the Mac ' +
+        '(reset-app-secrets.command) and pair again.';
+    } else {
+      noticeEl.textContent = 'This pairing is no longer valid. Delete this app, reset the app ' +
+        'secrets on the Mac (reset-app-secrets.command), and pair again.';
+    }
     noticeEl.className = 'stale';
   }
   function clearStale() {
@@ -688,6 +718,13 @@ var Rekey = (function () {
     remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
   };
 
+  // These credentials came from a master: they are to be swapped. Any record of an
+  // earlier pairing's unfinished swap goes — it belongs to credentials that are gone.
+  function markRekeyPending() {
+    storage.remove(Rekey.NEXT);
+    storage.set(Rekey.PENDING, '1');
+  }
+
   function loadCreds() {
     var s = storage.get(SECRET_KEY) || null;
     var t = storage.get(TOKEN_KEY) || null;
@@ -707,7 +744,7 @@ var Rekey = (function () {
         // — which is why the Home Screen app re-keys on its first launch, so that
         // copy of the master stops working.)
         storeCreds(c);
-        if (isStandalone()) storage.set(Rekey.PENDING, '1');
+        if (isStandalone()) markRekeyPending();
         return c;
       }
     }
@@ -846,7 +883,11 @@ var Rekey = (function () {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ iv: ivB, ct: ctB, mac: mac })
       });
-    }).then(function (res) { return { status: res.status }; });
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        return { status: res.status, error: data && data.error };
+      });
+    });
   }
 
   var rekey = Rekey.create({
@@ -968,7 +1009,7 @@ var Rekey = (function () {
       storeCreds(c);
       secret = c.secret; token = c.token; nonce = null; deriveKeys();
       staleShown = false; hideNotice();
-      if (isStandalone()) { storage.set(Rekey.PENDING, '1'); startRekey(); }
+      if (isStandalone()) { markRekeyPending(); startRekey(); }
       maybeShowAddHome();
       document.body.removeChild(ov);
       secretPromptShown = false;

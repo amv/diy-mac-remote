@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { test, assert } = require('./harness');
 const { createLoader } = require('../app/loader');
 const pathutil = require('../app/pathutil');
-const { deriveCreds, buildEnvelope, pairMaster } = require('./helpers');
+const { deriveCreds, buildEnvelope, buildOpsEnvelope, pairMaster, sha256hex } = require('./helpers');
 
 const ROOT = path.join(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'app');
@@ -164,4 +164,74 @@ test('the backend answers only the two routes that need a secret', () => {
   assert.strictEqual(main.handle({ method: 'PUT', path: '/msg', body: '' }).status, 404);
   // A query string doesn't hide the route.
   assert.strictEqual(main.handle({ method: 'GET', path: '/nonce?x=1', body: '' }).status, 200);
+});
+
+// ---- a re-key whose disk operations fail ----
+//
+// The real server cannot be made to fail a rename, so these use the stub host.
+// The promise under test: a re-key either fails with nothing changed, or it
+// succeeds — never "failed" with the disk already half-way to new credentials,
+// which would leave the phone's retry refused and the next restart switching to
+// credentials the phone had given up on.
+
+const DIR = '/home/stub/.diy-mac-remote';
+function stubPairing(tweak) {
+  const host = makeStubHost();
+  if (tweak) tweak(host.sys);
+  const main = loadApp(host.sys);
+  const init = main.init({ scheme: 'http', port: 8765, entry: 'perl', argv: ['http://stub.local:8765/'], certHosts: null });
+  assert.strictEqual(init.ok, true, JSON.stringify(init));
+  main.banner();
+  return { ...host, main, old: deriveCreds(pairMaster(host.logs.join('\n'))) };
+}
+function send(main, creds, ops) {
+  const nonce = JSON.parse(main.handle({ method: 'GET', path: '/nonce', body: '' }).text).nonce;
+  return main.handle({ method: 'POST', path: '/msg', body: buildOpsEnvelope(creds.secret, creds.token, nonce, 1, ops) });
+}
+function freshCreds() {
+  const secret = crypto.randomBytes(32).toString('hex');
+  const token = crypto.randomBytes(32).toString('hex');
+  return { secret, token, hash: sha256hex('diy-mac-remote-token:' + token) };
+}
+const reKey = (c) => [{ t: 'r', s: c.secret, h: c.hash }];
+
+test('a re-key whose files cannot be moved into place still succeeds, and a restart finishes it', () => {
+  const t = stubPairing((sys) => {
+    const rename = sys.renameReplace;
+    sys.renameReplace = (from, to) => {
+      if (to === DIR + '/secret') throw new Error('disk says no');
+      rename(from, to);
+    };
+  });
+  const next = freshCreds();
+  assert.strictEqual(send(t.main, t.old, reKey(next)).status, 200, 'committed, so it is not reported as a failure');
+  assert.strictEqual(send(t.main, next, [{ t: 'ping' }]).status, 200, 'the new credentials work now');
+  assert.strictEqual(send(t.main, t.old, [{ t: 'ping' }]).status, 401, 'and the old ones are gone');
+  assert.ok(t.logs.some((l) => /Re-key accepted, but moving/.test(l)), 'the failure is logged');
+
+  // The disk is mid-move (token replaced, secret still staged). A restart on it
+  // rolls forward to what the phone was told succeeded.
+  const after = makeStubHost();
+  for (const [k, v] of t.files) after.files.set(k, v);
+  const main2 = loadApp(after.sys);
+  assert.strictEqual(main2.init({ scheme: 'http', port: 8765, entry: 'perl', argv: [], certHosts: null }).ok, true);
+  assert.strictEqual(send(main2, next, [{ t: 'ping' }]).status, 200, 'restart: new credentials');
+  assert.strictEqual(send(main2, t.old, [{ t: 'ping' }]).status, 401, 'restart: old ones stay dead');
+  assert.ok(![...after.files.keys()].some((k) => k.endsWith('.new')), 'no staging files left');
+  assert.ok(!after.files.has(DIR + '/rekey.pending'), 'the marker is used up');
+});
+
+test('a re-key that cannot be staged fails cleanly: nothing changed, the offer stands', () => {
+  const t = stubPairing((sys) => {
+    const write = sys.writePrivateText;
+    sys.writePrivateText = (p, text) => {
+      if (p === DIR + '/secret.new') throw new Error('disk full');
+      write(p, text);
+    };
+  });
+  const r = send(t.main, t.old, reKey(freshCreds()));
+  assert.strictEqual(r.status, 500, r.text);
+  assert.ok(![...t.files.keys()].some((k) => k.endsWith('.new')), 'the half it staged is removed');
+  assert.ok(t.files.has(DIR + '/rekey.pending'), 'the marker is still there');
+  assert.strictEqual(send(t.main, t.old, [{ t: 'ping' }]).status, 200, 'the old pairing is untouched');
 });

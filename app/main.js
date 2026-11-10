@@ -80,9 +80,9 @@ function init(hello) {
 
   var argv = hello.argv || [];
   var invocation = parseInvocation(argv);
-  // `--reset-token` mints a fresh pairing key and prints a new QR (every
-  // previously paired device must then re-pair). Use it to pair a new device, or
-  // to recover when a phone loses its bookmarked pairing.
+  // `--reset-token` mints a fresh pairing key and prints a new QR. Only one phone
+  // is paired at a time, so the phone paired before stops working. Use it to
+  // switch phones, or to recover when a phone loses its bookmarked pairing.
   var resetToken = argv.indexOf('--reset-token') >= 0;
 
   var secret;
@@ -154,7 +154,8 @@ function banner() {
     say('it kept its pairing, and the address that goes with it.');
     say('');
     say('No Home Screen app, or the pairing was lost? Reset the app secrets and');
-    say('start again — a fresh pairing QR prints then (every device re-pairs):');
+    say('start again — a fresh pairing QR prints then (one phone is paired at a');
+    say('time, so the phone paired now is replaced by the one that scans it):');
     say('  reset-app-secrets.command in the Desktop diy-mac-remote folder,');
     say('  or: ' + S.startCmd + ' --reset-token');
     return;

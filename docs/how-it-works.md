@@ -239,7 +239,9 @@ order.
   process really is this repo's server, then asks it to stop (TERM) before
   insisting (KILL).
 - `reset.sh` — the reset logic behind those entries: `./reset.sh app-secrets`
-  forgets the pairing (fresh QR on next start, all devices re-pair);
+  forgets the pairing (fresh QR on next start; only one phone is paired at a
+  time, so the phone paired before is cut off and the one that scans the new QR
+  takes its place);
   `./reset.sh certificate` mints a fresh CA + certificate (install the new CA
   on the phone once). Both confirm before resetting; a running server picks
   the reset up on its next start.

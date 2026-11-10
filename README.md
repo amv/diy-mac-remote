@@ -220,6 +220,14 @@ written to disk.
    the pairing lives. A restarted server can't show this QR again, so without the
    icon the only way back in is to
    [pair again](docs/pairing.md#pairing-again-a-new-phone-or-a-lost-pairing).
+3. Open the Home Screen app once, with the server running (just open it; don't
+   type anything yet, see below). That first launch swaps the pairing key for one
+   of the app's own, and retires the key in the Safari tab.
+
+**One phone at a time.** A pairing belongs to a single phone: the first Home
+Screen app to open replaces the key for everyone, so a second phone that scanned
+the same QR stops working. To use a different phone, pair again — which
+disconnects the old one.
 
 **Don't try the remote yet.** The first time you use it, macOS asks for
 Accessibility — the right to control your Mac — for whatever is running the
@@ -275,7 +283,9 @@ Screen app carries the pairing and the address with it.
   (plus your mode, if any).
 - **A new phone, or a lost pairing:**
   [pair again](docs/pairing.md#pairing-again-a-new-phone-or-a-lost-pairing).
-  Every phone paired before has to re-pair.
+  Only one phone is paired at a time, so the phone paired before stops working
+  and, if you still want it, has to pair again (which in turn disconnects the
+  new one).
 - **Keep the Mac and the phone on the same Wi-Fi or tailnet**, and keep the
   server running — the phone loads the page from your Mac every time; nothing
   lives on the phone but the icon and its stored pairing.

@@ -190,19 +190,41 @@ function rekeyError(status, message) {
   return err;
 }
 
+// Either this throws and nothing changed, or it returns and the new credentials
+// are the pairing. There is no third outcome in which the caller is told "failed"
+// while the disk is already half-way to the new credentials: that would leave the
+// phone's retry refused (the marker is gone) and the next restart quietly
+// switching the server to credentials the phone gave up on.
 function rekey(secretHex, tokenHashHex) {
   if (!isHex64(secretHex) || !isHex64(tokenHashHex)) {
     throw rekeyError(400, 'rekey needs a 64-hex secret and token hash');
   }
   if (!sys.exists(REKEY_MARKER)) throw rekeyError(409, 'this pairing has already been re-keyed');
   sys.assertOwnerOnly(DIR);
-  // Stage both, token first and secret last (recoverRekey relies on that order),
-  // then move them over the live files, using up the marker before the last move.
-  sys.writePrivateText(TOKEN_NEW, tokenHashHex + '\n');
-  sys.writePrivateText(SECRET_NEW, secretHex + '\n');
-  sys.renameReplace(TOKEN_NEW, TOKEN_FILE);
-  sys.removeFile(REKEY_MARKER);
-  sys.renameReplace(SECRET_NEW, SECRET_FILE);
+  // Stage both, token first and secret last (recoverRekey relies on that order).
+  // Nothing live has changed yet, so a failure here is a plain failure: clean up
+  // what was staged and report it.
+  try {
+    sys.writePrivateText(TOKEN_NEW, tokenHashHex + '\n');
+    sys.writePrivateText(SECRET_NEW, secretHex + '\n');
+  } catch (err) {
+    try { sys.removeFile(TOKEN_NEW); } catch (e) { /* recoverRekey discards it at the next start */ }
+    try { sys.removeFile(SECRET_NEW); } catch (e) { /* ditto */ }
+    throw err;
+  }
+  // Both staged: this is the commit point — the same one recoverRekey uses, so a
+  // restart from here on rolls FORWARD. Moving the files over the live ones is
+  // then only bookkeeping. If it fails, say so and carry on with the new
+  // credentials in memory (the caller switches to them) rather than report a
+  // failure that would be a lie: the next start finishes the moves.
+  try {
+    sys.renameReplace(TOKEN_NEW, TOKEN_FILE);
+    sys.removeFile(REKEY_MARKER);
+    sys.renameReplace(SECRET_NEW, SECRET_FILE);
+  } catch (err) {
+    sys.log('Re-key accepted, but moving the new files into place failed (' + err.message +
+            '). The next start finishes it.');
+  }
   return { secret: secretHex, tokenHash: bytes.fromHex(tokenHashHex) };
 }
 

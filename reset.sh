@@ -4,8 +4,9 @@
 #
 #   ./reset.sh app-secrets    forget the pairing (the app secret + auth-token
 #                             hash). The next server start mints a fresh
-#                             pairing key and prints a new QR; EVERY paired
-#                             device must re-pair.
+#                             pairing key and prints a new QR. Only one phone
+#                             is paired at a time: the one paired before is cut
+#                             off, and the phone that scans the new QR replaces it.
 #   ./reset.sh certificate    throw away the local CA + server certificate and
 #                             mint fresh ones (via setup-https.sh, which also
 #                             refreshes the Desktop folder). The iPhone must
@@ -50,8 +51,9 @@ case "$WHAT" in
     fi
     echo "This forgets the current pairing: the app secret and the auth-token"
     echo "hash in $DIR."
-    echo "EVERY paired device loses access, and re-pairs by scanning the fresh"
-    echo "QR the server prints on its next start."
+    echo "The phone paired now loses access. Only one phone is paired at a time:"
+    echo "the phone that scans the fresh QR the server prints on its next start"
+    echo "takes its place."
     echo
     if ! confirm "Reset the app secrets?"; then
       echo "Not resetting — nothing was changed."
@@ -61,7 +63,7 @@ case "$WHAT" in
           "$DIR/secret.new" "$DIR/token.hash.new"
     echo
     echo "App secrets reset. The next server start mints a new pairing key and"
-    echo "prints the QR to re-pair your devices."
+    echo "prints the QR to pair the phone again."
     restart_note
     ;;
 

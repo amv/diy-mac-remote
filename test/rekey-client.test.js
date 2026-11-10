@@ -41,7 +41,7 @@ async function setup() {
   const s = await startServer({ home, port });
   const master = deriveCreds(pairMaster(s.out()));
   const store = memoryStore();
-  const phone = { creds: { ...master }, net: 'ok', calls: [] };
+  const phone = { creds: { ...master }, net: 'ok', calls: [], fake: null };
   store.set('diy-mac-remote_secret', master.secret);
   store.set('diy-mac-remote_token', master.token);
 
@@ -59,10 +59,15 @@ async function setup() {
     call: async (creds, ops) => {
       phone.calls.push(ops[0].t);
       if (phone.net === 'drop-request') throw new Error('offline');
+      // `fake(opType)` may answer in the server's place, to try replies a healthy one rarely gives.
+      const faked = phone.fake && phone.fake(ops[0].t);
+      if (faked) return faked;
       const nonce = JSON.parse((await httpReq(port, 'GET', '/nonce')).body).nonce;
       const r = await httpReq(port, 'POST', '/msg', buildOpsEnvelope(creds.secret, creds.token, nonce, 1, ops));
       if (phone.net === 'drop-answer') throw new Error('connection lost');
-      return { status: r.status };
+      let error;
+      try { error = JSON.parse(r.body).error; } catch (e) { /* no body */ }
+      return { status: r.status, error };
     },
   });
   const works = async (creds) => {
@@ -115,7 +120,7 @@ test('the answer is lost after the server swapped: the next launch adopts the ne
   } finally { await t.done(); }
 });
 
-test('the request never arrives: the next launch tries again with fresh credentials', async () => {
+test('the request never arrives: the next launch sends the same credentials again', async () => {
   const t = await setup();
   try {
     t.rekey.markPending();
@@ -125,7 +130,8 @@ test('the request never arrives: the next launch tries again with fresh credenti
 
     t.phone.net = 'ok';
     assert.strictEqual(await t.rekey.run(), 'done');
-    assert.notStrictEqual(t.store.get('diy-mac-remote_secret'), JSON.parse(abandoned).secret);
+    assert.strictEqual(t.store.get('diy-mac-remote_secret'), JSON.parse(abandoned).secret,
+      'the pair written down is the pair installed');
     assert.ok(await t.works(t.phone.creds));
     assert.ok(!(await t.works(t.master)));
   } finally { await t.done(); }
@@ -154,6 +160,73 @@ test('a phone whose credentials the server does not know reports them stale', as
     assert.strictEqual(await t.rekey.run(), 'stale');
     assert.ok(!t.rekey.isPending(), 'and it stops trying');
     assert.ok(await t.works(t.master), 'the server is untouched');
+  } finally { await t.done(); }
+});
+
+test('a reply that is not "unknown credentials" decides nothing: the staged credentials survive', async () => {
+  const t = await setup();
+  try {
+    t.rekey.markPending();
+    t.phone.net = 'drop-request';
+    assert.strictEqual(await t.rekey.run(), 'later');
+    const staged = t.store.get('diy-mac-remote_next');
+    t.phone.net = 'ok';
+
+    // The ping gets a 5xx, then an expired-nonce 401: neither says the credentials are unknown.
+    for (const reply of [{ status: 500, error: 'rekey failed' }, { status: 401, error: 'unknown or expired nonce' }]) {
+      t.phone.fake = (op) => (op === 'ping' ? reply : null);
+      assert.strictEqual(await t.rekey.run(), 'later', JSON.stringify(reply));
+      assert.strictEqual(t.store.get('diy-mac-remote_next'), staged, 'kept, and not replaced');
+      assert.ok(t.rekey.isPending());
+    }
+
+    t.phone.fake = null;
+    assert.strictEqual(await t.rekey.run(), 'done');
+    assert.strictEqual(t.store.get('diy-mac-remote_secret'), JSON.parse(staged).secret);
+    assert.ok(await t.works(t.phone.creds));
+  } finally { await t.done(); }
+});
+
+test('an expired nonce on the re-key itself is not a stale pairing', async () => {
+  const t = await setup();
+  try {
+    t.rekey.markPending();
+    t.phone.fake = (op) => (op === 'r' ? { status: 401, error: 'expired nonce' } : null);
+    assert.strictEqual(await t.rekey.run(), 'later');
+    assert.ok(t.rekey.isPending(), 'still pending: nothing was decided');
+    assert.ok(t.store.get('diy-mac-remote_next'), 'and what it tried is kept');
+
+    t.phone.fake = null;
+    assert.strictEqual(await t.rekey.run(), 'done');
+    assert.ok(!(await t.works(t.master)));
+  } finally { await t.done(); }
+});
+
+test('a refusal to a retry is still a refusal: it stops asking', async () => {
+  const t = await setup();
+  try {
+    t.rekey.markPending();
+    t.phone.net = 'drop-request';
+    assert.strictEqual(await t.rekey.run(), 'later');
+    t.phone.net = 'ok';
+
+    fs.rmSync(path.join(t.dir, 'rekey.pending')); // the server now refuses every re-key
+    assert.strictEqual(await t.rekey.run(), 'refused', 'the ping says "unknown", the retry gets a 409');
+    assert.strictEqual(t.store.get('diy-mac-remote_next'), null);
+    assert.ok(!t.rekey.isPending());
+    assert.ok(await t.works(t.master), 'the pairing it had still works');
+  } finally { await t.done(); }
+});
+
+test('a new master discards what an earlier pairing left half done', async () => {
+  const t = await setup();
+  try {
+    t.rekey.markPending();
+    t.phone.net = 'drop-request';
+    await t.rekey.run();
+    assert.ok(t.store.get('diy-mac-remote_next'));
+    t.rekey.markPending();
+    assert.strictEqual(t.store.get('diy-mac-remote_next'), null);
   } finally { await t.done(); }
 });
 

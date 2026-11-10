@@ -254,7 +254,7 @@ if ! $START_ONLY; then
 fi
 echo "    start.command                    -> double-click to start the server${START_ARGS:+ (mode: $START_ARGS)}$START_NOTE"
 echo "    stop.command                     -> double-click to stop it again"
-echo "    reset-app-secrets.command        -> forget the pairing (devices re-pair)"
+echo "    reset-app-secrets.command        -> forget the pairing (the phone pairs again)"
 if ! $START_ONLY; then
   echo "    reset-certificate.command        -> mint a fresh CA + certificate"
 fi

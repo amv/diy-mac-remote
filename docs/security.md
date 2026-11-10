@@ -58,10 +58,12 @@ attacker can start operating your keyboard and mouse. You do not want that.
    about `token = H₂(key)`, and the 128-bit key can't be brute-forced), so the
    server rejects every command. Deriving both from one key is purely so the QR
    stays small; it doesn't weaken the split. Because the server keeps only the
-   secret + token hash, it can't reprint the pairing key on a later start: paired
-   devices just reopen the app, and to pair a new device (or recover a lost pairing)
-   you run `node server.js --reset-token` (or `perl server.pl --reset-token`),
-   which mints a fresh key + QR (all devices re-pair; note the secret rotates
+   secret + token hash, it can't reprint the pairing key on a later start: the
+   paired phone just reopens the app, and to pair a different phone (or recover a
+   lost pairing) you run `node server.js --reset-token` (or
+   `perl server.pl --reset-token`), which mints a fresh key + QR. **Only one phone
+   is paired at a time**: the pairing is one secret, so the new pairing replaces
+   the old one and the phone paired before stops working (note the secret rotates
    with it).
    - **What this covers:** offline theft of the disk or a backup — someone who
      ends up with your files but was never on your network still can't drive the
@@ -83,15 +85,22 @@ attacker can start operating your keyboard and mouse. You do not want that.
    stores) inside an ordinary authenticated, encrypted message, and keeps the new
    pair in its own storage. The key in the link then derives credentials that
    match nothing.
-   - **Once only.** The server accepts a re-key only while `rekey.pending` exists
-     in `~/.diy-mac-remote/`; minting a pairing creates it and the re-key uses it
-     up. It is never accepted batched with other operations. If someone with a
-     copy of the key re-keys before the phone does, the phone is refused (and you
-     reset the pairing) rather than silently locked out.
+   - **Once only, and so one phone.** The server accepts a re-key only while
+     `rekey.pending` exists in `~/.diy-mac-remote/`; minting a pairing creates it
+     and the re-key uses it up. Whichever Home Screen app re-keys first owns the
+     pairing; any other phone that was given the same key is locked out. That is
+     deliberate — it is what makes the key in the link a dead string — and it is
+     why only one phone can be paired at a time. It is never accepted batched
+     with other operations. If someone with a copy of the key re-keys before the
+     phone does, the phone is refused (and you reset the pairing) rather than
+     silently locked out.
    - **Crash-safe.** The new files are staged (`secret.new`, `token.hash.new`)
-     and moved into place; on the next start an interrupted re-key is finished
-     or discarded, never left half-applied. If the phone's answer is lost, it
-     checks on its next launch whether the new credentials were installed.
+     and moved into place. Once both are staged the re-key is committed: if
+     staging fails, nothing has changed and it is reported as a failure; if only
+     the moves fail, it is reported as success and the next start finishes them;
+     and on the next start an interrupted re-key is finished or discarded, never
+     left half-applied. If the phone's answer is lost, it checks on its next
+     launch whether the new credentials were installed.
    - **What it does _not_ cover:** the window between pairing and the first
      launch (the key is live until then), anyone who captured live traffic during
      that window and holds the key (the new secret travels encrypted under the old
@@ -112,10 +121,10 @@ the sticky no-sudo form) whenever they touch it. Caveats, honestly stated:
   _is_ backed up. Those are Tailscale's to manage — but unlike your CA key, a
   stolen node key can be revoked from the admin console.
 - **Excluded means not restored.** After restoring a Mac from backup the server
-  simply mints a fresh pairing on first run (scan the new QR to re-pair), and
-  HTTPS users re-run `./setup-https.sh` and install the new CA once. That's the
-  point: a restore is exactly the moment you want fresh keys, not old ones with
-  an unknown number of copies.
+  simply mints a fresh pairing on first run (scan the new QR to pair the phone
+  again), and HTTPS users re-run `./setup-https.sh` and install the new CA once.
+  That's the point: a restore is exactly the moment you want fresh keys, not old
+  ones with an unknown number of copies.
 
 **Crypto in the browser:** `crypto.subtle` (Web Crypto) is only available in a
 secure context (HTTPS/localhost), which plain-HTTP LAN pages are not. So the page

@@ -4,6 +4,15 @@ The first time you start the server it mints a **pairing key** and prints it as
 a QR code. Scanning that QR and then saving the page to your Home Screen is the
 whole of pairing — and it happens once, not every time you use the remote.
 
+**Only one phone can be paired at a time.** The pairing is a single secret that
+the Mac holds, and the phone's Home Screen app takes it over on its first launch
+([below](#2-add-it-to-your-home-screen-full-screen)). A second phone that scans
+the same QR or opens the same link isn't a second pairing: it holds a key that the
+first phone's launch retires, and then it only ever sees _this pairing is no
+longer valid_. To switch phones,
+[pair again](#pairing-again-a-new-phone-or-a-lost-pairing) — which ends the old
+phone's pairing.
+
 This is steps 4 and 5 of the [quick start](../README.md#4-pair-the-phone-once),
 with the reasons.
 
@@ -36,13 +45,18 @@ in your history, an iCloud-synced tab or a backup is just a dead string. It
 happens once per pairing (the server allows it only while `rekey.pending` exists
 in `~/.diy-mac-remote/`), and it is quiet: if the server isn't reachable at that
 moment the app simply tries again on its next launch. A pairing from before this
-existed has no such file and keeps working as it always did.
+existed has no such file and keeps working as it always did (that is a legacy
+case, not a way to pair more phones: only one phone at a time is supported).
 
-In a Safari tab the page reminds you that pairing isn't finished until it's on
-the Home Screen. And if the server stops recognising the app's credentials (the
-pairing was reset, say), the app says so in a red bar — *this pairing is no longer
-valid* — instead of a bare error: delete the app, reset the app secrets, and pair
-again.
+This is also why the **Safari tab stops working** once the Home Screen app has
+opened: the key it was opened with has been retired. That is expected. The tab
+says so in a red bar and tells you to use the Home Screen app instead.
+
+In a Safari tab the page also reminds you that pairing isn't finished until it's
+on the Home Screen. And if the server stops recognising the _Home Screen app's_
+own credentials (the pairing was reset, or another phone re-keyed it first), the
+app says so in a red bar — *this pairing is no longer valid* — instead of a bare
+error: delete the app, reset the app secrets, and pair again.
 
 **Don't skip this step.** The pairing key is shown exactly once, because
 it is never written to disk on the Mac — that's the point of it. After the
@@ -80,8 +94,9 @@ click either way; only the size of what you handed over differs.
 ## Pairing again (a new phone, or a lost pairing)
 
 Resetting the pairing is what mints a fresh key and prints a new QR. That's the
-way to pair a **second** device, or to recover a phone whose Home Screen app was
-deleted:
+way to **switch to a different phone**, or to recover a phone whose Home Screen
+app was deleted. There is only ever one paired phone, so this replaces the pairing
+rather than adding to it:
 
 ```sh
 node server.js --reset-token   # rotate the pairing, print a fresh QR
@@ -90,9 +105,11 @@ perl server.pl --reset-token   # ...or the same, on the Node-free path
 
 — or double-click `reset-app-secrets.command` in the Desktop `diy-mac-remote`
 folder and restart the server; same effect. Either way the rotation is total:
-**every** previously paired device loses its pairing and must scan the new QR
-(delete the stale Home Screen app first, or you'll end up with two icons).
+the previously paired phone loses its pairing, and the phone you want must scan
+the new QR (delete the stale Home Screen app first, or you'll end up with two
+icons). Don't hand the new QR to two phones — the first Home Screen app to open
+wins and the other is locked out.
 
 A fresh QR is a fresh live key, so it earns the same treatment as the first one:
-once the new device is on its Home Screen, close the window that printed it
+once the phone is on its Home Screen, close the window that printed it
 ([step 3](#3-close-the-terminal-and-restart-it-the-way-youll-keep-starting-it)).
