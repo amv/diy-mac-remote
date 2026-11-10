@@ -70,7 +70,7 @@ my $MAX_BODY = 64 * 1024;
 # seconds before it is dropped too. Without these, one connection that stops
 # reading blocks every other, and enough idle ones exhaust file descriptors.
 my $MAX_CONNS     = 64;
-my $IDLE_TIMEOUT  = (($ENV{DIY_MAC_REMOTE_IDLE_TIMEOUT} || '') =~ /\A[1-9]\d*\z/) ? $ENV{DIY_MAC_REMOTE_IDLE_TIMEOUT} : 30;
+my $IDLE_TIMEOUT  = (($ENV{DIY_MAC_REMOTE_IDLE_TIMEOUT} || '') =~ /\A[1-9]\d*\z/) ? $ENV{DIY_MAC_REMOTE_IDLE_TIMEOUT} : 120;
 my $WRITE_TIMEOUT = 5;
 my @ARGS = @ARGV;
 my $REQ_ID = 0;
