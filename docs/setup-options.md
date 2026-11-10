@@ -547,9 +547,11 @@ mode baked in, so a double-click can't start it in a weaker one — and
 
 ### Server modes
 
-The mode decides which address goes into the pairing QR — and that is all it
-does. The server always listens on `PORT` (8765 by default) on every interface,
-whatever the mode:
+The mode decides which address goes into the pairing QR, and in one case which
+address the server binds. Every mode but `tailscale` listens on `PORT` (8765 by
+default) on every interface; `tailscale` listens on this Mac's tailnet IPv4
+address only, and waits for Tailscale to come up before it listens anywhere —
+see [No source filtering](#no-source-filtering) above:
 
 ```sh
 node server.js               # detect (default): try tailscale first, then wifi
@@ -563,12 +565,13 @@ The [Node-free entrypoint](#run-it-without-nodejs) takes exactly the same
 arguments — `perl server.pl tailscale`, `./start-plain.sh --reset-token`, and so
 on. Only the TLS flags below are Node-only.
 
-**On a restart the mode does nothing at all**, because no address is resolved or
-printed — the paired app has one. So it only matters on a pairing run, and there
-it matters permanently: the address in the QR is the one the phone keeps.
-`tailscale` is the strict one — asked to pair over the tailnet with no tailnet
-up, it refuses rather than quietly pairing your phone to a LAN address it would
-then keep using. `detect` will take that LAN address without asking, which is
+**On a restart no address is resolved or printed** — the paired app already has
+one — so as far as the QR goes the mode only matters on a pairing run, and there
+it matters permanently: the address in the QR is the one the phone keeps. (A
+restart in `tailscale` mode still resolves the tailnet address, but to bind it,
+not to pair.) `tailscale` is the strict one — with no tailnet up it does not
+pair at all: it waits for one, and listens on nothing until it appears, rather
+than quietly pairing your phone to a LAN address it would then keep using. `detect` will take that LAN address without asking, which is
 fine behind the certificate and not on its own (see
 [Securing the connection](#securing-the-connection-between-server-and-iphone)).
 
