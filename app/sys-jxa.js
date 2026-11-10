@@ -259,8 +259,7 @@ function runScript(source) {
                     'it again: it keeps running without anything granted after ' +
                     'it started. If both are on, the app was probably rebuilt ' +
                     'since: run "tccutil reset All local.diy-mac-remote.server" ' +
-                    'and allow them again. Script was: ' +
-                    source.split('\n').join(' / '));
+                    'and allow them again.');
   }
 }
 

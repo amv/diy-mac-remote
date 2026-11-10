@@ -228,3 +228,18 @@ test('dictation is its key, down and up apart; Do Not Disturb is a tap of its ke
   sysInput.runSystem({ t: 's', k: 'dnd' });
   assert.deepStrictEqual(events, [{ key: [178, true] }, { key: [178, false] }]);
 });
+
+test('errors never echo what was typed', () => {
+  // Errors are logged and returned unencrypted, and the text may be a password.
+  const secret = 'hunter2é';
+  const attempts = [
+    () => input.actionToStatements({ text: secret, modifiers: ['command'] }),
+    () => input.actionToStatements({ key: secret }),
+    () => input.actionToStatements({ text: 'a', modifiers: [secret] }),
+    () => input.runSystem({ k: secret }),
+  ];
+  for (const attempt of attempts) {
+    try { attempt(); assert.fail('expected a throw'); }
+    catch (err) { assert.ok(!String(err.message).includes('hunter2'), err.message); }
+  }
+});

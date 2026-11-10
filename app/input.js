@@ -55,7 +55,7 @@ function resolveModifiers(modifiers) {
   var parts = [];
   for (var i = 0; i < modifiers.length; i++) {
     var name = String(modifiers[i]).toLowerCase();
-    if (!keys.MODIFIERS[name]) throw new Error('Unknown modifier: ' + modifiers[i]);
+    if (!keys.MODIFIERS[name]) throw new Error('Unknown modifier');
     parts.push(keys.MODIFIERS[name]);
   }
   return ' using {' + parts.join(', ') + '}';
@@ -155,7 +155,9 @@ function actionToStatements(action) {
       // Select All, and whatever is typed next replaces the document. Refuse it
       // and let the phone show the error instead.
       if (!keystrokeCanType(text)) {
-        throw new Error('Cannot combine "' + text + '" with modifiers: this Mac\'s keyboard ' +
+        // No part of the text in this message: errors are logged and sent back
+        // unencrypted, and what was typed may be a password.
+        throw new Error('Cannot combine that character with modifiers: this Mac\'s keyboard ' +
           'layout has no single key for it, and a shortcut needs one. (If the layout does ' +
           'reach it, add it to DIY_MAC_REMOTE_DIRECT_CHARS.)');
       }
@@ -174,7 +176,7 @@ function actionToStatements(action) {
   if ('key' in action) {
     var name = String(action.key).toLowerCase();
     var known = keys.KEY_CODES[name];
-    if (known === undefined) throw new Error('Unknown key: ' + action.key);
+    if (known === undefined) throw new Error('Unknown key');
     return [TELL + 'key code ' + known + mods];
   }
 
@@ -312,7 +314,7 @@ function runSystem(op) {
     sys.input.keyScript(script);
     return sys.dryRun ? { dryRun: true, script: script } : { ok: true };
   }
-  throw new Error('Unknown system control: ' + op.k);
+  throw new Error('Unknown system control');
 }
 
 module.exports = {
