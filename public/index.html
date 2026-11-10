@@ -465,6 +465,100 @@
 </div>
 
 <script>
+/*
+ * The pairing re-key, from the phone's side.
+ *
+ * The master in the QR also ends up in the saved Home Screen link and in Safari's
+ * history. So the first time the Home Screen app opens, it makes a secret and a
+ * token of its own and has the server swap them in (server: app/pairing.js,
+ * rekey); the master then derives credentials that match nothing. Everything the
+ * flow touches is passed in — storage, the network, randomness, hashing — so it
+ * is the same code under test as on the phone (test/rekey-client.test.js).
+ *
+ * Two things can go wrong that a naive version gets wrong: the server applies the
+ * re-key and the answer is lost, or the request never arrives. The new
+ * credentials are therefore written down BEFORE they are sent, and a later launch
+ * asks the server which of the two it is: do the new ones work (ping)? Then adopt
+ * them. Not? Then try again with fresh ones.
+ *
+ *   store.get/set/remove(key)   a string store (localStorage)
+ *   random(n)                   -> n random bytes
+ *   toHex(bytes)                -> hex string
+ *   sha256hex(string)           -> hex SHA-256 of the string's UTF-8 bytes
+ *   current()                   -> { secret, token } now in use
+ *   adopt({ secret, token })    make these the credentials, and keep them
+ *   call(creds, ops)            -> Promise<{ status }>; REJECTS when the outcome
+ *                               is unknown (no connection, no answer)
+ */
+var Rekey = (function () {
+  var PENDING = 'diy-mac-remote_rekey'; // set while the credentials in use came from the master
+  var NEXT = 'diy-mac-remote_next';     // the credentials a re-key is trying to install
+
+  function create(d) {
+    function readNext() {
+      var raw = d.store.get(NEXT);
+      if (!raw) return null;
+      try {
+        var n = JSON.parse(raw);
+        return (n && typeof n.secret === 'string' && typeof n.token === 'string') ? n : null;
+      } catch (e) { return null; }
+    }
+
+    function commit(creds) {
+      d.adopt(creds);       // persists them; only then is the record of the attempt dropped
+      d.store.remove(NEXT);
+      d.store.remove(PENDING);
+      return 'done';
+    }
+
+    // Resolves true (these work), false (the server says they don't), or rejects.
+    function works(creds) {
+      return d.call(creds, [{ t: 'ping' }]).then(function (r) { return r.status === 200; });
+    }
+
+    function attempt() {
+      return Promise.resolve().then(function () {
+        var next = { secret: d.toHex(d.random(32)), token: d.toHex(d.random(32)) };
+        d.store.set(NEXT, JSON.stringify(next));
+        var hash = d.sha256hex('diy-mac-remote-token:' + next.token);
+        return d.call(d.current(), [{ t: 'r', s: next.secret, h: hash }]).then(function (r) {
+          if (r.status === 200) return commit(next);
+          if (r.status >= 500) return 'later';   // the server may have got halfway: keep NEXT
+          // A refusal — an install from before re-keying existed, or credentials the
+          // server does not know. Either way there is nothing more to try.
+          d.store.remove(NEXT);
+          d.store.remove(PENDING);
+          return 'refused';
+        }, function () { return 'later'; });     // outcome unknown: keep NEXT, ask next time
+      });
+    }
+
+    return {
+      markPending: function () { d.store.set(PENDING, '1'); },
+      isPending: function () { return !!d.store.get(PENDING); },
+
+      // Resolves 'none' (nothing to do), 'done', 'refused' or 'later' (try again
+      // on the next launch). Never rejects.
+      run: function () {
+        if (!d.store.get(PENDING)) return Promise.resolve('none');
+        var next = readNext();
+        var settled = next
+          ? works(next).then(function (ok) {
+              if (ok) return commit(next);
+              d.store.remove(NEXT);
+              return attempt();
+            }, function () { return 'later'; })
+          : attempt();
+        return settled.catch(function () { return 'later'; });
+      }
+    };
+  }
+
+  return { create: create, PENDING: PENDING, NEXT: NEXT };
+})();
+</script>
+
+<script>
 (function () {
   'use strict';
 
@@ -506,10 +600,33 @@
   // cache the two derived values, else fall back to the cached values, else
   // (later) prompt the user to paste the master/URL.
   function storeCreds(c) {
-    try { localStorage.setItem(SECRET_KEY, c.secret); } catch (e) {}
-    try { localStorage.setItem(TOKEN_KEY, c.token); } catch (e) {}
+    storage.set(SECRET_KEY, c.secret);
+    storage.set(TOKEN_KEY, c.token);
   }
+  // Is this the Home Screen app (as opposed to a tab in Safari)? Only the Home
+  // Screen app re-keys: Safari is where the QR is scanned, and the saved link is
+  // what the Home Screen app starts from, so that is the copy that has to be made
+  // single-use.
+  function isStandalone() {
+    try {
+      return window.navigator.standalone === true ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    } catch (e) { return false; }
+  }
+
+  var storage = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+    remove: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
+  };
+
   function loadCreds() {
+    var s = storage.get(SECRET_KEY) || null;
+    var t = storage.get(TOKEN_KEY) || null;
+    // The Home Screen app starts from the saved link, so the #master is in its
+    // address on EVERY launch — long after it has been swapped for credentials of
+    // the app's own (see Rekey, above). Once it holds some, they win over the link.
+    if (s && t && isStandalone()) return { secret: s, token: t };
     if (location.hash && location.hash.length > 1) {
       var master = decodeURIComponent(location.hash.slice(1));
       if (master) {
@@ -518,14 +635,14 @@
         // Home Screen" saves the current URL as the app's launch URL, so keeping
         // the master in the fragment lets the installed (separately-sandboxed) app
         // re-derive and auto-authenticate instead of prompting. (The master stays
-        // out of network requests, but does remain in Safari's address bar / history.)
+        // out of network requests, but does remain in Safari's address bar / history
+        // — which is why the Home Screen app re-keys on its first launch, so that
+        // copy of the master stops working.)
         storeCreds(c);
+        if (isStandalone()) storage.set(Rekey.PENDING, '1');
         return c;
       }
     }
-    var s = null, t = null;
-    try { s = localStorage.getItem(SECRET_KEY) || null; } catch (e) {}
-    try { t = localStorage.getItem(TOKEN_KEY) || null; } catch (e) {}
     return { secret: s, token: t };
   }
   var creds = loadCreds();
@@ -639,6 +756,54 @@
     return sendQueue;
   }
 
+  // ---- re-key on the Home Screen app's first launch (see Rekey, above) ----
+
+  // One request under the GIVEN credentials, independent of the session state the
+  // rest of the page keeps — it has to work with credentials that may not be the
+  // ones in use. Rejects when no answer came back at all.
+  function callWith(creds, ops) {
+    var ek = SHA256.bytes(SHA256.toBytes('diy-mac-remote-enc:' + creds.secret));
+    var mk = SHA256.bytes(SHA256.toBytes('diy-mac-remote-mac:' + creds.secret));
+    return fetch('/nonce').then(function (r) { return r.json(); }).then(function (d) {
+      var plain = JSON.stringify({ n: d.nonce, c: 1, o: ops, p: creds.token });
+      var iv = randomBytes(12);
+      var ivB = b64(iv), ctB = b64(ChaCha20.xor(ek, iv, 1, padPlaintext(plain)));
+      var mac = hmacHex(mk, 'POST\n/msg\n' + ivB + '\n' + ctB);
+      return fetch('/msg', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ iv: ivB, ct: ctB, mac: mac })
+      });
+    }).then(function (res) { return { status: res.status }; });
+  }
+
+  var rekey = Rekey.create({
+    store: storage,
+    // New key material must never come from the Math.random fallback above.
+    random: function (n) {
+      if (typeof crypto === 'undefined' || !crypto.getRandomValues) throw new Error('no secure random');
+      var a = new Uint8Array(n);
+      crypto.getRandomValues(a);
+      return a;
+    },
+    toHex: function (bytes) { return SHA256.toHex(bytes); },
+    sha256hex: function (str) { return SHA256.toHex(SHA256.bytes(SHA256.toBytes(str))); },
+    current: function () { return { secret: secret, token: token }; },
+    adopt: function (c) {
+      storeCreds(c);
+      secret = c.secret; token = c.token; nonce = null;
+      deriveKeys();
+    },
+    call: callWith
+  });
+
+  // Behind whatever is already queued, and ahead of everything after it, so no
+  // keystroke is signed with credentials that are being replaced.
+  function startRekey() {
+    sendQueue = sendQueue.then(function () { return rekey.run(); });
+  }
+  if (secret && token && rekey.isPending()) startRekey();
+
   // Quantize sends to a fixed time grid: buffer ops and flush on a timer instead
   // of firing the instant a key is pressed. This batches bursts into one request,
   // coalesces mouse-move/scroll deltas (so a drag is a few summed moves, not
@@ -725,6 +890,7 @@
       var c = deriveCreds(v);
       storeCreds(c);
       secret = c.secret; token = c.token; nonce = null; deriveKeys();
+      if (isStandalone()) { storage.set(Rekey.PENDING, '1'); startRekey(); }
       document.body.removeChild(ov);
       secretPromptShown = false;
       setStatus('paired', 'ok');
