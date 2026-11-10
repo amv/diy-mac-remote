@@ -25,7 +25,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const protocol = require('./app/protocol');
 
 const ROOT = __dirname;
@@ -400,13 +400,63 @@ const server = TLS
   ? https.createServer({ cert: TLS.cert, key: TLS.key }, handler)
   : http.createServer(handler);
 
-// Bind all interfaces (unless HOST is set). Deliberately not the tailnet
-// interface even in Tailscale mode: binding 0.0.0.0 always succeeds, so there's
-// no address-not-available race while Tailscale comes up, the server survives
-// the tailnet's IP changing, and a server started before the tailnet is up stays
-// up and starts working when it arrives. What reaches the input path is decided
-// by the pairing crypto, not by the address a request arrived on.
-const bindHost = HOST_OVERRIDE || '0.0.0.0';
+// What to bind. Normally every interface (0.0.0.0): that always succeeds, so
+// there is no address-not-available race, and what reaches the input path is
+// decided by the pairing crypto rather than by the address a request arrived on.
+//
+// Tailscale mode is the exception. You chose it because the tailnet is the only
+// network this server should be on, so it listens on this Mac's tailnet address
+// and nothing else: on a coffee-shop Wi-Fi the port is simply not there. The
+// cost is the race the all-interfaces bind avoided — the address does not exist
+// until Tailscale is up — so at startup we wait for it (a login start can beat
+// the tailnet by a while) instead of falling back to a wider bind. HOST, if set,
+// still wins.
+const TAILSCALE_MODE = ARGV.includes('tailscale');
+const TAILNET_WAIT_S = Number(process.env.DIY_MAC_REMOTE_TAILNET_WAIT) >= 0
+  ? Number(process.env.DIY_MAC_REMOTE_TAILNET_WAIT) : 60;
+
+// This Mac's tailnet IPv4 address, or null if there is no tailnet up right now.
+function tailnetAddress() {
+  const bins = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
+  for (const bin of bins) {
+    try {
+      const out = execFileSync(bin, ['status', '--json'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000,
+      });
+      const status = JSON.parse(out);
+      if (status.BackendState === 'Stopped') continue;
+      for (const ip of (status.Self && status.Self.TailscaleIPs) || []) {
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) && ip !== '0.0.0.0') return ip;
+      }
+    } catch { /* no such binary, not JSON, timed out — try the next */ }
+  }
+  return null;
+}
+
+function sleepMs(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+
+function resolveBindHost() {
+  if (HOST_OVERRIDE) return HOST_OVERRIDE;
+  if (!TAILSCALE_MODE) return '0.0.0.0';
+  const deadline = Date.now() + TAILNET_WAIT_S * 1000;
+  let said = false;
+  for (;;) {
+    const ip = tailnetAddress();
+    if (ip) return ip;
+    if (Date.now() >= deadline) {
+      console.error('\n❌ Tailscale mode: no tailnet address for this Mac (is Tailscale running ' +
+        'and signed in?). Not listening on any other interface. Start Tailscale and try again, ' +
+        'or drop "tailscale" to listen on the LAN.');
+      process.exit(1);
+    }
+    if (!said) {
+      console.log(`Waiting up to ${TAILNET_WAIT_S}s for the Tailscale network to come up...`);
+      said = true;
+    }
+    sleepMs(2000);
+  }
+}
+const bindHost = resolveBindHost();
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -438,6 +488,7 @@ server.listen(PORT, bindHost, async () => {
   }
 
   console.log('diy-mac-remote server running.');
+  if (TAILSCALE_MODE && !HOST_OVERRIDE) console.log(`   Listening on the tailnet address only (${bindHost}).`);
   if (TLS) {
     console.log(`🔒 Serving HTTPS (cert: ${TLS_CERT_FILE}).`);
   } else {

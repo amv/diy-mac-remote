@@ -52,19 +52,84 @@ use IO::Select;
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use POSIX ();
+use JSON::PP ();    # core since Perl 5.14; reads `tailscale status --json`
 
 my $ROOT = dirname(abs_path($0));
 my $PUBLIC = "$ROOT/public";
 my $PORT = $ENV{PORT} || 8765;
 # Explicit bind-address override. Unset (the normal case) we bind all
-# interfaces; set, we bind exactly that address.
-my $BIND = $ENV{HOST} || '0.0.0.0';
+# interfaces — except in Tailscale mode, which binds the tailnet address only
+# (see resolve_bind below); set, we bind exactly that address.
+my $HOST_OVERRIDE = $ENV{HOST};
 my $MAX_BODY = 64 * 1024;
 my @ARGS = @ARGV;
 my $REQ_ID = 0;
 
 $SIG{PIPE} = 'IGNORE';   # a client that hangs up must not take the server down
 $| = 1;                  # our output is a log; keep it in order with the backend's
+
+# ---------------------------------------------------------------------------
+# What to bind
+# ---------------------------------------------------------------------------
+#
+# Normally every interface (0.0.0.0): that always succeeds, so there is no
+# address-not-available race, and what reaches the input path is decided by the
+# pairing crypto rather than by the address a request arrived on.
+#
+# Tailscale mode is the exception. You chose it because the tailnet is the only
+# network this server should be on, so it listens on this Mac's tailnet address
+# and nothing else: on a coffee-shop Wi-Fi the port is simply not there. The cost
+# is the race the all-interfaces bind avoided — the address does not exist until
+# Tailscale is up — so at startup we wait for it (a login start can beat the
+# tailnet by a while) instead of falling back to a wider bind. HOST, if set,
+# still wins. (server.js does the same thing.)
+my $TAILSCALE_MODE = (grep { $_ eq 'tailscale' } @ARGS) ? 1 : 0;
+my $TAILNET_WAIT = (defined $ENV{DIY_MAC_REMOTE_TAILNET_WAIT} && $ENV{DIY_MAC_REMOTE_TAILNET_WAIT} =~ /\A\d+\z/)
+    ? $ENV{DIY_MAC_REMOTE_TAILNET_WAIT} : 60;
+
+# This Mac's tailnet IPv4 address, or undef if there is no tailnet up right now.
+sub tailnet_address {
+    for my $bin ('tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale') {
+        my $found = eval {
+            local $SIG{ALRM} = sub { die "timeout\n" };
+            alarm 10;
+            open(my $fh, '-|', $bin, 'status', '--json') or die "no $bin\n";
+            my $json = do { local $/; <$fh> };
+            close($fh);
+            alarm 0;
+            my $status = JSON::PP::decode_json($json);
+            return undef if ($status->{BackendState} || '') eq 'Stopped';
+            for my $ip (@{ ($status->{Self} || {})->{TailscaleIPs} || [] }) {
+                return $ip if $ip =~ /\A\d{1,3}(?:\.\d{1,3}){3}\z/ && $ip ne '0.0.0.0';
+            }
+            undef;
+        };
+        alarm 0;
+        return $found if defined $found;
+    }
+    return undef;
+}
+
+sub resolve_bind {
+    return $HOST_OVERRIDE if $HOST_OVERRIDE;
+    return '0.0.0.0' unless $TAILSCALE_MODE;
+    my $deadline = time() + $TAILNET_WAIT;
+    my $said = 0;
+    while (1) {
+        my $ip = tailnet_address();
+        return $ip if defined $ip;
+        if (time() >= $deadline) {
+            print "\n❌ Tailscale mode: no tailnet address for this Mac (is Tailscale running "
+                . "and signed in?). Not listening on any other interface. Start Tailscale and "
+                . "try again, or drop \"tailscale\" to listen on the LAN.\n";
+            exit 1;
+        }
+        unless ($said++) { print "Waiting up to ${TAILNET_WAIT}s for the Tailscale network to come up...\n"; }
+        sleep 2;
+    }
+}
+
+my $BIND = resolve_bind();
 
 # ---------------------------------------------------------------------------
 # The protocol: `key: value` lines, blank line ends the message
@@ -415,6 +480,7 @@ unless ((one($ready, 'ok') || '') eq '1') {
 }
 
 print "diy-mac-remote server running.\n";
+print "   Listening on the tailnet address only ($BIND).\n" if $TAILSCALE_MODE && !$HOST_OVERRIDE;
 print "   Serving plain HTTP — this entrypoint has no TLS at all. Use it over a\n";
 print "   tailnet, or on a network with no route to the internet. See\n";
 print "   docs/setup-options.md > \"Run it without Node.js\".\n";

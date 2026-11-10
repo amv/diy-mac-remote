@@ -501,19 +501,28 @@ From there the phone needs Tailscale, the CA installed and trusted
 
 ### No source filtering
 
-**The server does not filter by source address.** It listens on all interfaces
-in every mode, and a request is judged only by whether it carries the pairing
-credentials — not by the network it arrived on. Tailscale mode is about which
-address goes into the pairing QR, not about who may connect. If you want the
-server to answer on one interface only, bind it there: `HOST=<addr> ./start.sh`.
+**Outside Tailscale mode the server does not filter by source address.** It
+listens on all interfaces, and a request is judged only by whether it carries
+the pairing credentials — not by the network it arrived on. To make it answer on
+one interface only, bind it there: `HOST=<addr> ./start.sh`.
 
-What that costs is worth being clear about: anyone who can reach the port gets
-as far as the page and the unauthenticated `/nonce` endpoint. They cannot type
-on your Mac — every command is authenticated and encrypted — but they can knock.
-The reason it's left this way is that a source filter is a second, weaker copy
-of a decision the crypto already makes correctly, and it brought real costs:
-`detect` could silently drop it because of a certificate detail, and a server
-started before Tailscale came up refused to run at all.
+**Tailscale mode is the exception: it binds the tailnet address only.** With
+`./start.sh tailscale` (or `./start-plain.sh tailscale`, or the app built with
+`tailscale`) the server looks up this Mac's tailnet IPv4 address and listens
+there and nowhere else — on any other network the port is not open at all. The
+address only exists once Tailscale is up, so at startup the server waits for it
+(up to 60 seconds; `DIY_MAC_REMOTE_TAILNET_WAIT=<seconds>` changes that) and then
+gives up with an error. It never falls back to listening on every interface.
+`HOST=<addr>` still overrides it. Only the tailnet's IPv4 address is bound.
+
+In the all-interfaces modes, anyone who can reach the port gets as far as the
+page and the unauthenticated `/nonce` endpoint. They cannot type on your Mac —
+every command is authenticated and encrypted — but they can knock. That is why
+Tailscale mode, where you have said the tailnet is the only network that
+matters, closes the port everywhere else. The other modes stay open because a
+source filter is a second, weaker copy of a decision the crypto already makes
+correctly, and it brought real costs: `detect` could silently drop it because of
+a certificate detail.
 
 ## Starting it without the app
 

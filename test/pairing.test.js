@@ -151,66 +151,86 @@ test('an oversized body is refused, and the server survives it', async () => {
   }
 });
 
-// ---- no source filtering: every source is served alike ----
-// Access is decided by the pairing crypto, never by the address a request came
-// from. Tailscale mode is the case that used to filter, so it's the one to pin.
+// ---- every mode but tailscale listens everywhere; tailscale listens on the tailnet ----
+// Outside Tailscale mode access is decided by the pairing crypto, never by the
+// address a request came from, so every source is served alike. Tailscale mode
+// binds the tailnet address only: the fake tailscale below reports 127.0.0.1 as
+// that address, so another address on this host stands in for "the LAN".
 
-test('a non-loopback (LAN) source is served, in tailscale mode too', async () => {
-  const lan = lanIPv4();
-  if (!lan) { console.log('       (no LAN IPv4 on this host — skipped)'); return; }
-  const home = mkTempHome();
-  const bin = fakeTailscaleBin(home);
-  const port = await getFreePort();
-  const s = await startServer({ home, port, url: null, args: ['tailscale'],
-    env: { PATH: `${bin}:${process.env.PATH}` } });
-  try {
-    const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
-    assert.strictEqual(r.status, 200, 'public /nonce should answer any source: ' + r.body);
-  } finally {
-    await stopServer(s.child);
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
+const FAST = { DIY_MAC_REMOTE_TAILNET_WAIT: '0' };
 
-// ---- strict when pairing, permissive when restarting ----
-// The mode picks the address baked into the QR, so a mode that can't produce one
-// must fail loudly — but only while pairing. A restart resolves no address at
-// all, so a down tailnet is no reason to refuse to run: it will likely come up.
+for (const perl of [false, true]) {
+  const who = perl ? 'server.pl' : 'server.js';
 
-test('tailscale mode with no tailnet refuses to pair', async () => {
-  const home = mkTempHome();
-  const bin = fakeTailscaleBin(home, { running: false });
-  const port = await getFreePort();
-  try {
-    const r = await runServer({ home, port, url: null, args: ['tailscale'],
-      env: { PATH: `${bin}:${process.env.PATH}` } });
-    assert.strictEqual(r.code, 1, 'should exit non-zero, got ' + r.code);
-    assert.match(r.out, /no tailnet detected/, 'should say why: ' + r.out);
-    assert.ok(!fs.existsSync(path.join(home, '.diy-mac-remote', 'secret')),
-      'must not leave a half-minted pairing behind');
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
+  test(`${who}: a non-loopback (LAN) source is served outside tailscale mode`, async () => {
+    const lan = lanIPv4();
+    if (!lan) { console.log('       (no LAN IPv4 on this host — skipped)'); return; }
+    const home = mkTempHome();
+    const port = await getFreePort();
+    const s = await startServer({ home, port, perl });
+    try {
+      const r = await httpFrom({ host: lan, port, localAddress: lan, path: '/nonce' });
+      assert.strictEqual(r.status, 200, 'public /nonce should answer any source: ' + r.body);
+    } finally {
+      await stopServer(s.child);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
-test('an already-paired server starts in tailscale mode with no tailnet', async () => {
-  const home = mkTempHome();
-  const port = await getFreePort();
-  // Pair first (custom URL, no detection), then restart with the tailnet down.
-  await stopServer((await startServer({ home, port })).child);
+  test(`${who}: tailscale mode listens on the tailnet address only`, async () => {
+    const home = mkTempHome();
+    const bin = fakeTailscaleBin(home);
+    const port = await getFreePort();
+    const s = await startServer({ home, port, perl, url: null, args: ['tailscale'],
+      env: { PATH: `${bin}:${process.env.PATH}`, ...FAST } });
+    try {
+      assert.match(s.out(), /tailnet address only \(127\.0\.0\.1\)/, s.out());
+      const ok = await httpFrom({ host: '127.0.0.1', port, path: '/nonce' });
+      assert.strictEqual(ok.status, 200, 'the tailnet address should answer');
+      // Anything else on this host must not: another loopback address, and the
+      // LAN address if there is one.
+      for (const other of ['127.0.0.2', lanIPv4()].filter(Boolean)) {
+        await assert.rejects(httpFrom({ host: other, port, path: '/nonce' }),
+          (e) => e.code === 'ECONNREFUSED', `${other} should refuse connections`);
+      }
+    } finally {
+      await stopServer(s.child);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
-  const bin = fakeTailscaleBin(home, { running: false });
-  const s = await startServer({ home, port, url: null, args: ['tailscale'],
-    env: { PATH: `${bin}:${process.env.PATH}` } });
-  try {
-    assert.match(s.out(), /Home Screen app/, 'should point at the paired app: ' + s.out());
-    const r = await httpReq(port, 'GET', '/nonce');
-    assert.strictEqual(r.status, 200, 'server should be serving: ' + r.body);
-  } finally {
-    await stopServer(s.child);
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
+  test(`${who}: tailscale mode with HOST set binds HOST instead`, async () => {
+    const home = mkTempHome();
+    const bin = fakeTailscaleBin(home);
+    const port = await getFreePort();
+    const s = await startServer({ home, port, perl, url: null, args: ['tailscale'],
+      env: { PATH: `${bin}:${process.env.PATH}`, HOST: '127.0.0.2', ...FAST } });
+    try {
+      assert.strictEqual((await httpFrom({ host: '127.0.0.2', port, path: '/nonce' })).status, 200);
+      await assert.rejects(httpFrom({ host: '127.0.0.1', port, path: '/nonce' }),
+        (e) => e.code === 'ECONNREFUSED');
+    } finally {
+      await stopServer(s.child);
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test(`${who}: tailscale mode with no tailnet never falls back to a wider bind`, async () => {
+    const home = mkTempHome();
+    const bin = fakeTailscaleBin(home, { running: false });
+    const port = await getFreePort();
+    try {
+      const r = await runServer({ home, port, perl, url: null, args: ['tailscale'],
+        env: { PATH: `${bin}:${process.env.PATH}`, ...FAST } });
+      assert.strictEqual(r.code, 1, 'should exit non-zero, got ' + r.code + '\n' + r.out);
+      assert.match(r.out, /Not listening on any other interface/, r.out);
+      assert.ok(!fs.existsSync(path.join(home, '.diy-mac-remote', 'secret')),
+        'must not leave a half-minted pairing behind');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
 
 // ---- a restart prints no address ----
 // The paired Home Screen app already holds it, and retyping a hostname is

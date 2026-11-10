@@ -222,7 +222,9 @@ function fakeTailscaleBin(dir, { running = true } = {}) {
   fs.mkdirSync(bin, { recursive: true });
   const json = JSON.stringify(running
     ? { BackendState: 'Running',
-        Self: { DNSName: 'testmac.tail9f2c.ts.net.', HostName: 'testmac' } }
+        Self: { DNSName: 'testmac.tail9f2c.ts.net.', HostName: 'testmac',
+              // Loopback stands in for the tailnet address, so tests can bind it.
+              TailscaleIPs: ['127.0.0.1', 'fd7a:115c:a1e0::1'] } }
     : { BackendState: 'Stopped', Self: {} });
   fs.writeFileSync(path.join(bin, 'tailscale'),
     `#!/bin/sh\n[ "$1" = "status" ] && cat <<'JSON'\n${json}\nJSON\n`, { mode: 0o755 });
