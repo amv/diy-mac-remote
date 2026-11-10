@@ -38,6 +38,12 @@ in `~/.diy-mac-remote/`), and it is quiet: if the server isn't reachable at that
 moment the app simply tries again on its next launch. A pairing from before this
 existed has no such file and keeps working as it always did.
 
+In a Safari tab the page reminds you that pairing isn't finished until it's on
+the Home Screen. And if the server stops recognising the app's credentials (the
+pairing was reset, say), the app says so in a red bar — *this pairing is no longer
+valid* — instead of a bare error: delete the app, reset the app secrets, and pair
+again.
+
 **Don't skip this step.** The pairing key is shown exactly once, because
 it is never written to disk on the Mac — that's the point of it. After the
 server restarts it is simply gone: the Mac kept only the derived secret and the

@@ -268,6 +268,25 @@
     text-align: center;
   }
 
+  /* a standing instruction (amber), or "this pairing is dead" (red) */
+  #notice {
+    padding: 8px calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+    background: #3a3216;
+    color: #ffe9a8;
+    font-size: 13px;
+    text-align: center;
+  }
+  #notice.stale { background: #4a1f25; color: #ffd7db; }
+  #notice button {
+    margin-left: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+  }
+
   .view { padding: 0 8px; }
   .hidden { display: none; }
 
@@ -400,6 +419,7 @@
   <button id="tab-kb" type="button">Keyboard</button>
 </nav>
 <div id="errbar" class="hidden"></div>
+<div id="notice" class="hidden"></div>
 
 <div id="view-mouse" class="view">
   <div class="mouse-top">
@@ -524,11 +544,13 @@ var Rekey = (function () {
         return d.call(d.current(), [{ t: 'r', s: next.secret, h: hash }]).then(function (r) {
           if (r.status === 200) return commit(next);
           if (r.status >= 500) return 'later';   // the server may have got halfway: keep NEXT
-          // A refusal — an install from before re-keying existed, or credentials the
-          // server does not know. Either way there is nothing more to try.
+          // Nothing more to try. 401 means the server does not know these
+          // credentials at all — the pairing is stale, and the user has to be told.
+          // Anything else is a refusal to re-key (an install from before it
+          // existed), which changes nothing about whether the app works.
           d.store.remove(NEXT);
           d.store.remove(PENDING);
-          return 'refused';
+          return r.status === 401 ? 'stale' : 'refused';
         }, function () { return 'later'; });     // outcome unknown: keep NEXT, ask next time
       });
     }
@@ -537,8 +559,9 @@ var Rekey = (function () {
       markPending: function () { d.store.set(PENDING, '1'); },
       isPending: function () { return !!d.store.get(PENDING); },
 
-      // Resolves 'none' (nothing to do), 'done', 'refused' or 'later' (try again
-      // on the next launch). Never rejects.
+      // Resolves 'none' (nothing to do), 'done', 'refused' (it cannot re-key, and
+      // nothing is wrong), 'stale' (the server does not know these credentials) or
+      // 'later' (try again on the next launch). Never rejects.
       run: function () {
         if (!d.store.get(PENDING)) return Promise.resolve('none');
         var next = readNext();
@@ -576,6 +599,51 @@ var Rekey = (function () {
       errEl.textContent = '';
       errEl.classList.add('hidden');
     }
+  }
+
+  // ---- notices: what the user has to do, which an error bar cannot say ----
+  var noticeEl = document.getElementById('notice');
+  var staleShown = false;
+  var homeDismissed = false;
+
+  function hideNotice() {
+    noticeEl.textContent = '';
+    noticeEl.className = 'hidden';
+  }
+
+  // The server does not know this app's credentials: the pairing was reset, or
+  // this is a copy of an old one. Nothing the app can do fixes that, so say what
+  // does — and keep saying it, rather than a "bad mac" that vanishes on the next tap.
+  function showStale() {
+    staleShown = true;
+    noticeEl.textContent = 'This pairing is no longer valid. Delete this app, reset the app ' +
+      'secrets on the Mac (reset-app-secrets.command), and pair again.';
+    noticeEl.className = 'stale';
+  }
+  function clearStale() {
+    if (!staleShown) return;
+    staleShown = false;
+    hideNotice();
+    maybeShowAddHome();
+  }
+
+  function isIOS() {
+    var ua = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  // In a Safari tab the pairing is not finished: the key in this page's address
+  // stays a working credential until the Home Screen app has re-keyed. Say so.
+  function maybeShowAddHome() {
+    if (staleShown || homeDismissed || !secret || !token || !isIOS() || isStandalone()) return;
+    noticeEl.textContent = 'Not finished: tap Share, then Add to Home Screen, and open the app ' +
+      'from there. Until you do, the pairing key in this page\'s address stays valid.';
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Hide';
+    close.addEventListener('click', function () { homeDismissed = true; hideNotice(); });
+    noticeEl.appendChild(close);
+    noticeEl.className = '';
   }
 
   // ---- auth: master pairing key -> secret (crypto) + token (hash-checked) ----
@@ -740,6 +808,10 @@ var Rekey = (function () {
         return sendEncrypted(ops, true);
       }
       return res.json().catch(function () { return {}; }).then(function (data) {
+        // 401 from a bad MAC or token (nonce trouble was retried above) means the
+        // server does not know our credentials: not a glitch, a dead pairing.
+        if (res.status === 401 && /bad mac|token/.test(data.error || '')) showStale();
+        else if (res.ok) clearStale();
         if (!res.ok) setStatus(data.error || ('HTTP ' + res.status), 'err');
         else setStatus('sent', 'ok');
       });
@@ -800,7 +872,12 @@ var Rekey = (function () {
   // Behind whatever is already queued, and ahead of everything after it, so no
   // keystroke is signed with credentials that are being replaced.
   function startRekey() {
-    sendQueue = sendQueue.then(function () { return rekey.run(); });
+    sendQueue = sendQueue.then(function () {
+      return rekey.run().then(function (outcome) {
+        if (outcome === 'stale') showStale();
+        return outcome;
+      });
+    });
   }
   if (secret && token && rekey.isPending()) startRekey();
 
@@ -890,7 +967,9 @@ var Rekey = (function () {
       var c = deriveCreds(v);
       storeCreds(c);
       secret = c.secret; token = c.token; nonce = null; deriveKeys();
+      staleShown = false; hideNotice();
       if (isStandalone()) { storage.set(Rekey.PENDING, '1'); startRekey(); }
+      maybeShowAddHome();
       document.body.removeChild(ov);
       secretPromptShown = false;
       setStatus('paired', 'ok');
@@ -1247,6 +1326,7 @@ var Rekey = (function () {
   buildKbSpecial(); // build the special-keys bar now (Mouse is the default tab)
   if (secret && token) {
     setStatus('ready');
+    maybeShowAddHome();
     fetchNonce().catch(function () {}); // warm up a nonce
   } else {
     setStatus(secret ? 'not paired — token missing' : 'no secret', 'err');

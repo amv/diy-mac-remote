@@ -146,13 +146,14 @@ test('an install that cannot re-key is left as it was, and not asked again', asy
   } finally { await t.done(); }
 });
 
-test('a phone whose credentials the server does not know gives up quietly', async () => {
+test('a phone whose credentials the server does not know reports them stale', async () => {
   const t = await setup();
   try {
     t.phone.creds = { secret: 'a'.repeat(64), token: 'b'.repeat(64) };
     t.rekey.markPending();
-    assert.strictEqual(await t.rekey.run(), 'refused');
-    assert.ok(await t.works(t.master), 'and the server is untouched');
+    assert.strictEqual(await t.rekey.run(), 'stale');
+    assert.ok(!t.rekey.isPending(), 'and it stops trying');
+    assert.ok(await t.works(t.master), 'the server is untouched');
   } finally { await t.done(); }
 });
 
