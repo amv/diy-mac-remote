@@ -25,8 +25,18 @@ hand-installed "app", no store required. It is also **where the pairing lives**:
 
 1. With the scanned page open in **Safari**, tap the **Share** button → **Add to
    Home Screen** → **Add**.
-2. Launch it from the new **Mac Remote** icon. It opens full-screen, already
-   paired.
+2. Launch it from the new **Mac Remote** icon, **with the server running**. It
+   opens full-screen, already paired.
+
+**The first launch re-keys the pairing.** The key in the QR also ends up in the
+saved link and in Safari's history, so the Home Screen app, the first time it
+opens, makes a secret and a token of its own and has the server swap them in. From
+then on the key in the link derives credentials that match nothing — a copy of it
+in your history, an iCloud-synced tab or a backup is just a dead string. It
+happens once per pairing (the server allows it only while `rekey.pending` exists
+in `~/.diy-mac-remote/`), and it is quiet: if the server isn't reachable at that
+moment the app simply tries again on its next launch. A pairing from before this
+existed has no such file and keeps working as it always did.
 
 **Don't skip this step.** The pairing key is shown exactly once, because
 it is never written to disk on the Mac — that's the point of it. After the

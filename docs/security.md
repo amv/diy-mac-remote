@@ -73,6 +73,31 @@ attacker can start operating your keyboard and mouse. You do not want that.
      the secret too). This is a hardening of the read-only-disk case, not a new
      trust boundary against an on-network attacker. For that, still use TLS/VPN.
 
+6. **One-time pairing key (re-key on first launch).** The pairing key travels
+   in the QR's `#fragment`, and iOS "Add to Home Screen" saves that link as the
+   app's address — so the key also lives in the saved link and, from the Safari
+   visit, in history (which Safari may sync to other devices, including this
+   Mac's own disk). To keep it from being a permanent credential, the Home Screen
+   app **re-keys on its first launch**: it generates a random secret and token,
+   sends the server the secret and the _hash_ of the token (the two things it
+   stores) inside an ordinary authenticated, encrypted message, and keeps the new
+   pair in its own storage. The key in the link then derives credentials that
+   match nothing.
+   - **Once only.** The server accepts a re-key only while `rekey.pending` exists
+     in `~/.diy-mac-remote/`; minting a pairing creates it and the re-key uses it
+     up. It is never accepted batched with other operations. If someone with a
+     copy of the key re-keys before the phone does, the phone is refused (and you
+     reset the pairing) rather than silently locked out.
+   - **Crash-safe.** The new files are staged (`secret.new`, `token.hash.new`)
+     and moved into place; on the next start an interrupted re-key is finished
+     or discarded, never left half-applied. If the phone's answer is lost, it
+     checks on its next launch whether the new credentials were installed.
+   - **What it does _not_ cover:** the window between pairing and the first
+     launch (the key is live until then), anyone who captured live traffic during
+     that window and holds the key (the new secret travels encrypted under the old
+     one), and the Safari tab itself, which keeps working until the re-key.
+     Pairings made before this existed have no marker and are unchanged.
+
 **Backups.** Owner-only file permissions mean nothing on a mounted backup:
 whoever restores a copy of your home directory reads `secret`, `token.hash`,
 and (if you use HTTPS) `key.pem` + `ca-key.pem` — enough to impersonate the

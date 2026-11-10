@@ -249,7 +249,10 @@ function banner() {
   say('     or build it: ' + bundleCmd + ') and use the remote from there.');
   say('     macOS asks for Accessibility the first time you do, for whatever');
   say('     runs the server — let that be the app, not this Terminal and');
-  say('     everything you will ever run in it.\n');
+  say('     everything you will ever run in it.');
+  say('  4. Open the Home Screen app on the iPhone, with the server running. Its');
+  say('     first launch swaps the pairing key for one of its own, so the key in');
+  say('     the saved link (and in Safari\'s history) stops working.\n');
 }
 
 // Append a fragment (replacing any existing one). The pairing fragment carries

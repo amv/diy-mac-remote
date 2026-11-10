@@ -57,7 +57,8 @@ case "$WHAT" in
       echo "Not resetting — nothing was changed."
       exit 1
     fi
-    rm -f "$DIR/secret" "$DIR/token.hash"
+    rm -f "$DIR/secret" "$DIR/token.hash" "$DIR/rekey.pending" \
+          "$DIR/secret.new" "$DIR/token.hash.new"
     echo
     echo "App secrets reset. The next server start mints a new pairing key and"
     echo "prints the QR to re-pair your devices."
