@@ -23,7 +23,7 @@ function create(secret) {
   var encKey = sha256.hash('diy-mac-remote-enc:' + secret);
   var macKey = sha256.hash('diy-mac-remote-mac:' + secret);
 
-  // nonce -> { lastCounter, created }. A plain object used as an ordered map:
+  // nonce -> { lastCounter, created, used }. A plain object used as an ordered map:
   // JS keeps string keys in insertion order, which is what the cap below drops by.
   var nonces = Object.create(null);
   var nonceOrder = [];
@@ -40,14 +40,25 @@ function create(secret) {
       var key = nonceOrder[i];
       if (now - nonces[key].created > NONCE_TTL_MS) drop(key);
     }
-    while (nonceOrder.length >= MAX_NONCES) drop(nonceOrder[0]); // oldest first
+    // Over the cap, drop the oldest nonce that never carried a valid message
+    // first. GET /nonce is unauthenticated, so anyone who can reach the port can
+    // mint nonces; if the oldest went first, a flood of them would push a paired
+    // phone's live session out and keep it out. Only if every nonce has been
+    // used does the oldest of those go.
+    while (nonceOrder.length >= MAX_NONCES) {
+      var victim = nonceOrder[0];
+      for (var j = 0; j < nonceOrder.length; j++) {
+        if (!nonces[nonceOrder[j]].used) { victim = nonceOrder[j]; break; }
+      }
+      drop(victim);
+    }
   }
 
   function createNonce() {
     prune();
     // 256-bit, unique in practice.
     var nonce = bytes.toHex(bytes.b64Decode(sys.randomBase64(32)));
-    nonces[nonce] = { lastCounter: 0, created: Date.now() };
+    nonces[nonce] = { lastCounter: 0, created: Date.now(), used: false };
     nonceOrder.push(nonce);
     return nonce;
   }
@@ -65,6 +76,7 @@ function create(secret) {
       return { ok: false, error: 'bad or replayed counter' };
     }
     entry.lastCounter = counter;
+    entry.used = true; // the MAC was verified before this, so a key holder sent it
     return { ok: true };
   }
 
