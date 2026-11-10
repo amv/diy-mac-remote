@@ -400,6 +400,14 @@ const server = TLS
   ? https.createServer({ cert: TLS.cert, key: TLS.key }, handler)
   : http.createServer(handler);
 
+// Keep an idle connection for 120 seconds (Node's default is 5), matching
+// server.pl: the phone talks in separate short requests, and a longer window
+// narrows the race where the browser reuses a connection just as it is closed.
+// headersTimeout has to stay above keepAliveTimeout — on Node 18+ it also times
+// the gap between requests on a kept-alive connection, and would close it first.
+server.keepAliveTimeout = 120 * 1000;
+server.headersTimeout = 125 * 1000;
+
 // What to bind. Normally every interface (0.0.0.0): that always succeeds, so
 // there is no address-not-available race, and what reaches the input path is
 // decided by the pairing crypto rather than by the address a request arrived on.

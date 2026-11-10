@@ -280,3 +280,27 @@ test('a restart prints no address and no QR', async () => {
 test('cleanup: remove the temp home', () => {
   fs.rmSync(HOME, { recursive: true, force: true });
 });
+
+test('server.js keeps an idle connection open well past the Node default of 5s', async () => {
+  const home = mkTempHome();
+  const port = await getFreePort();
+  const s = await startServer({ home, port });
+  const net = require('net');
+  const sock = net.connect(port, '127.0.0.1');
+  let closed = false;
+  sock.on('close', () => { closed = true; });
+  sock.on('error', () => {});
+  try {
+    const answered = new Promise((r) => sock.once('data', r));
+    sock.write('GET /nonce HTTP/1.1\r\nHost: x\r\n\r\n');
+    await answered;
+    await new Promise((r) => setTimeout(r, 7000));
+    assert.ok(!closed, 'the idle keep-alive connection was closed after 7s');
+    sock.write('GET /nonce HTTP/1.1\r\nHost: x\r\n\r\n');
+    await new Promise((r) => sock.once('data', r)); // still usable
+  } finally {
+    sock.destroy();
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
