@@ -141,3 +141,75 @@ test('perl entrypoint: an oversized body is refused, not buffered', async () => 
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('perl entrypoint: a pile of idle connections cannot lock out a real request', async () => {
+  if (skipWithoutPerl()) return;
+  const home = mkTempHome();
+  const port = await getFreePort();
+  const s = await startServer({ home, port, perl: true });
+  const idle = [];
+  try {
+    for (let i = 0; i < 150; i++) {
+      const sock = net.connect(port, '127.0.0.1');
+      sock.on('error', () => {});
+      idle.push(sock);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    const r = await httpReq(port, 'GET', '/nonce');
+    assert.strictEqual(r.status, 200, 'a real request must still be served: ' + r.body);
+  } finally {
+    idle.forEach((c) => c.destroy());
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('perl entrypoint: a connection that goes quiet is dropped', async () => {
+  if (skipWithoutPerl()) return;
+  const home = mkTempHome();
+  const port = await getFreePort();
+  const s = await startServer({ home, port, perl: true,
+    env: { DIY_MAC_REMOTE_IDLE_TIMEOUT: '1' } });
+  try {
+    const closed = await new Promise((resolve) => {
+      const sock = net.connect(port, '127.0.0.1');
+      sock.on('error', () => resolve(true));
+      sock.on('close', () => resolve(true));
+      sock.write('GET /nonce HTTP/1.1\r\nHost: x\r\n'); // headers never finished
+      setTimeout(() => { sock.destroy(); resolve(false); }, 9000);
+    });
+    assert.ok(closed, 'a half-sent request should have been dropped by the idle timeout');
+    assert.strictEqual((await httpReq(port, 'GET', '/nonce')).status, 200);
+  } finally {
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('perl entrypoint: a client that never reads its answer cannot stall the others', async () => {
+  if (skipWithoutPerl()) return;
+  const home = mkTempHome();
+  const port = await getFreePort();
+  const s = await startServer({ home, port, perl: true });
+  const stuck = [];
+  try {
+    // Ask for the page over and over on sockets that are never read from, with a
+    // tiny receive window, so the replies back up in the server's send buffer.
+    for (let i = 0; i < 20; i++) {
+      const sock = net.connect({ port, host: '127.0.0.1' });
+      sock.on('error', () => {});
+      sock.pause();
+      sock.write('GET / HTTP/1.1\r\nHost: x\r\n\r\n'.repeat(40));
+      stuck.push(sock);
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    const started = Date.now();
+    const r = await httpReq(port, 'GET', '/nonce');
+    assert.strictEqual(r.status, 200);
+    assert.ok(Date.now() - started < 4000, `took ${Date.now() - started}ms behind stuck clients`);
+  } finally {
+    stuck.forEach((c) => c.destroy());
+    await stopServer(s.child);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

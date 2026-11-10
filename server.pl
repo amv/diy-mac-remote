@@ -62,6 +62,16 @@ my $PORT = $ENV{PORT} || 8765;
 # (see resolve_bind below); set, we bind exactly that address.
 my $HOST_OVERRIDE = $ENV{HOST};
 my $MAX_BODY = 64 * 1024;
+# One process, one loop, and the port is open to whoever can reach it — so what a
+# stranger can tie up is bounded. At most $MAX_CONNS clients are held at once (a
+# full house drops whoever has been quiet longest, so a pile of idle sockets
+# can't lock the phone out), a client silent for $IDLE_TIMEOUT seconds is
+# dropped, and a client that will not read its answer is given $WRITE_TIMEOUT
+# seconds before it is dropped too. Without these, one connection that stops
+# reading blocks every other, and enough idle ones exhaust file descriptors.
+my $MAX_CONNS     = 64;
+my $IDLE_TIMEOUT  = (($ENV{DIY_MAC_REMOTE_IDLE_TIMEOUT} || '') =~ /\A[1-9]\d*\z/) ? $ENV{DIY_MAC_REMOTE_IDLE_TIMEOUT} : 30;
+my $WRITE_TIMEOUT = 5;
 my @ARGS = @ARGV;
 my $REQ_ID = 0;
 
@@ -323,13 +333,24 @@ sub list_public {
     return $found;
 }
 
+# Client sockets are non-blocking, so a client that stops reading shows up as
+# EAGAIN here instead of freezing the whole server in syswrite. Wait for it for
+# a few seconds, then give up on it: false means "drop this connection".
 sub write_all {
     my ($fh, $data) = @_;
     my $off = 0;
+    my $deadline = time() + $WRITE_TIMEOUT;
     while ($off < length($data)) {
         my $n = syswrite($fh, $data, length($data) - $off, $off);
-        return 0 unless defined $n && $n > 0;    # client hung up
-        $off += $n;
+        if (defined $n) {
+            return 0 if $n == 0;
+            $off += $n;
+            next;
+        }
+        return 0 unless $!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR};    # client hung up
+        my $left = $deadline - time();
+        return 0 if $left <= 0;
+        IO::Select->new($fh)->can_write($left);
     }
     return 1;
 }
@@ -501,17 +522,24 @@ backend_call(message('t' => 'banner'));
 # second worker to do but wait its turn.
 
 my $select = IO::Select->new($listener);
-my %conns;    # "fileno" -> { fh, in }
+my %conns;    # "fileno" -> { fh, in, last }
 
 while (1) {
-    my @ready = $select->can_read();
+    my @ready = $select->can_read(5);
+    my $now = time();
     for my $fh (@ready) {
         if ($fh == $listener) {
             my $client = $listener->accept() or next;
+            # Room for one more? If not, the connection quiet the longest goes.
+            if (keys %conns >= $MAX_CONNS) {
+                my ($oldest) = sort { $conns{$a}{last} <=> $conns{$b}{last} } keys %conns;
+                close_connection($select, \%conns, $conns{$oldest}{fh});
+            }
             $client->autoflush(1);
+            $client->blocking(0);
             binmode($client);
             $select->add($client);
-            $conns{ fileno($client) } = { fh => $client, in => '' };
+            $conns{ fileno($client) } = { fh => $client, in => '', last => $now };
             next;
         }
 
@@ -519,10 +547,16 @@ while (1) {
         next unless $conn;
 
         my $n = sysread($fh, my $chunk, 65536);
-        if (!defined $n || $n == 0) {
+        if (!defined $n) {
+            next if $!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR};    # nothing there after all
             close_connection($select, \%conns, $fh);
             next;
         }
+        if ($n == 0) {
+            close_connection($select, \%conns, $fh);
+            next;
+        }
+        $conn->{last} = $now;
         $conn->{in} .= $chunk;
         # A client that sends a huge request line and never a blank line must
         # not be able to grow this buffer without limit.
@@ -532,6 +566,13 @@ while (1) {
             next;
         }
         close_connection($select, \%conns, $fh) unless process_buffer($fh, $conn);
+    }
+    # Whoever has said nothing for too long — including a slow-loris that opened
+    # a connection and never finished a request — is dropped.
+    $now = time();
+    for my $key (keys %conns) {
+        my $conn = $conns{$key} or next;
+        close_connection($select, \%conns, $conn->{fh}) if $now - $conn->{last} > $IDLE_TIMEOUT;
     }
 }
 
